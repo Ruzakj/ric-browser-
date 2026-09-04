@@ -23,36 +23,6 @@ dump_ui() {
   adb pull /sdcard/ric-window.xml /tmp/ric-window.xml >/dev/null
 }
 
-tap_toolbar_clickable_from_right() {
-  local offset="$1"
-  dump_ui
-  read -r X Y < <(OFFSET="$offset" python3 - <<'PY'
-import os,re
-import xml.etree.ElementTree as ET
-root=ET.parse('/tmp/ric-window.xml').getroot()
-items=[]
-for node in root.iter('node'):
-    if node.attrib.get('clickable')!='true':
-        continue
-    m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',node.attrib.get('bounds',''))
-    if not m:
-        continue
-    x1,y1,x2,y2=map(int,m.groups())
-    cy=(y1+y2)//2
-    width=x2-x1
-    if cy<450 and 20<width<300:
-        items.append(((x1+x2)//2,cy,node.attrib.get('text',''),node.attrib.get('class','')))
-items.sort(key=lambda v:v[0])
-offset=int(os.environ['OFFSET'])
-if len(items)<=offset:
-    raise SystemExit(f'Not enough toolbar clickables: {items}')
-x,y,_,_=items[-1-offset]
-print(x,y)
-PY
-)
-  adb shell input tap "$X" "$Y"
-}
-
 assert_ui_text() {
   local needle="$1"
   dump_ui
@@ -89,6 +59,31 @@ PY
   adb shell input tap "$X" "$Y"
 }
 
+tap_toolbar_exact() {
+  local needle="$1"
+  dump_ui
+  read -r X Y < <(NEEDLE="$needle" python3 - <<'PY'
+import os,re
+import xml.etree.ElementTree as ET
+needle=os.environ['NEEDLE']
+root=ET.parse('/tmp/ric-window.xml').getroot()
+for node in root.iter('node'):
+    if node.attrib.get('text','') != needle:
+        continue
+    m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',node.attrib.get('bounds',''))
+    if not m:
+        continue
+    x1,y1,x2,y2=map(int,m.groups())
+    cy=(y1+y2)//2
+    if cy < 450:
+        print((x1+x2)//2,cy)
+        raise SystemExit(0)
+raise SystemExit(f'Toolbar control not found: {needle}')
+PY
+)
+  adb shell input tap "$X" "$Y"
+}
+
 echo '=== INSTALL ==='
 test -s "$APK"
 adb install -r "$APK"
@@ -106,14 +101,14 @@ adb logcat -d -v threadtime > /tmp/logcat1.txt
 fail_on_runtime_blocker /tmp/logcat1.txt
 
 echo '=== COMPACT TAB MANAGER ==='
-tap_toolbar_clickable_from_right 1
+tap_toolbar_exact '□1'
 sleep 1
 assert_ui_text 'Tabs'
 adb shell input keyevent KEYCODE_BACK
 sleep 1
 
 echo '=== EXTENSIONS MANAGER ==='
-tap_toolbar_clickable_from_right 0
+tap_toolbar_exact '⋮'
 sleep 1
 assert_ui_text 'Extensions ('
 tap_ui_text 'Extensions ('
@@ -125,7 +120,7 @@ adb shell input keyevent KEYCODE_BACK
 sleep 1
 
 echo '=== MULTI-TAB CREATE FROM MENU ==='
-tap_toolbar_clickable_from_right 0
+tap_toolbar_exact '⋮'
 sleep 1
 tap_ui_text 'New tab'
 sleep 4
