@@ -33,7 +33,6 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -54,7 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var address: EditText
     private lateinit var progress: ProgressBar
     private lateinit var mediaButton: Button
-    private lateinit var tabsRow: LinearLayout
+    private lateinit var tabButton: Button
     private lateinit var webContainer: FrameLayout
 
     private val tabs = mutableListOf<BrowserTab>()
@@ -93,7 +92,7 @@ class MainActivity : AppCompatActivity() {
 
         if (tabs.isEmpty()) tabs.add(BrowserTab(HOME_URL, "New tab"))
         activeTabIndex = activeTabIndex.coerceIn(0, tabs.lastIndex)
-        renderTabs()
+        updateTabButton()
         openActiveTab()
         mediaHandler.postDelayed(mediaScanner, MEDIA_SCAN_INTERVAL_MS)
     }
@@ -112,46 +111,46 @@ class MainActivity : AppCompatActivity() {
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            setBackgroundColor(SURFACE_COLOR)
         }
 
-        val backButton = toolbarButton("‹") { handleBack() }
+        val backButton = toolbarButton("‹", 20f) { handleBack() }
         address = EditText(this).apply {
             hint = "Search or enter address"
             setSingleLine(true)
-            setTextSize(14f)
+            textSize = 14f
             setPadding(dp(14), 0, dp(14), 0)
             setSelectAllOnFocus(true)
             setTextColor(TEXT_COLOR)
             setHintTextColor(MUTED_TEXT_COLOR)
-            background = roundedBackground(INPUT_COLOR, BORDER_COLOR, 18f)
+            background = roundedBackground(INPUT_COLOR, BORDER_COLOR, 20f)
+            setOnFocusChangeListener { _, focused ->
+                if (!focused) address.setText(displayAddress(currentPageUrl))
+                else currentPageUrl?.let { address.setText(it); address.selectAll() }
+            }
             setOnEditorActionListener { v, _, _ ->
                 loadInActiveTab(v.text.toString())
+                clearFocus()
                 true
             }
         }
 
-        mediaButton = toolbarButton("↓") { showMediaList() }.apply { isEnabled = false }
-        val newTabButton = toolbarButton("+") { newTab() }
+        mediaButton = toolbarButton("↓", 18f) { showMediaList() }.apply {
+            isEnabled = false
+            visibility = View.GONE
+        }
+        tabButton = toolbarButton("□1", 13f) { showTabManager() }
+        val menuButton = toolbarButton("⋮", 20f) { showBrowserMenu() }
 
-        toolbar.addView(backButton, squareParams(42))
-        toolbar.addView(address, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            marginStart = dp(6)
-            marginEnd = dp(6)
+        toolbar.addView(backButton, squareParams(40))
+        toolbar.addView(address, LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+            marginStart = dp(4)
+            marginEnd = dp(4)
         })
-        toolbar.addView(mediaButton, squareParams(42))
-        toolbar.addView(newTabButton, squareParams(42).apply { marginStart = dp(4) })
-
-        val tabScroller = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            setPadding(dp(8), 0, dp(8), dp(5))
-        }
-        tabsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        tabScroller.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)))
+        toolbar.addView(mediaButton, squareParams(40).apply { marginEnd = dp(2) })
+        toolbar.addView(tabButton, LinearLayout.LayoutParams(dp(44), dp(40)).apply { marginEnd = dp(2) })
+        toolbar.addView(menuButton, squareParams(40))
 
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
@@ -159,69 +158,144 @@ class MainActivity : AppCompatActivity() {
         }
         webContainer = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
 
-        root.addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)))
-        root.addView(tabScroller, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(43)))
+        root.addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         root.addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)))
         root.addView(webContainer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
     }
 
-    private fun toolbarButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
+    private fun toolbarButton(label: String, fontSize: Float, onClick: () -> Unit): Button = Button(this).apply {
         text = label
         isAllCaps = false
-        textSize = if (label == "↓") 19f else 24f
+        textSize = fontSize
         setTextColor(TEXT_COLOR)
         setPadding(0, 0, 0, 0)
         minWidth = 0
         minHeight = 0
-        background = roundedBackground(INPUT_COLOR, BORDER_COLOR, 18f)
+        background = roundedBackground(BUTTON_COLOR, Color.TRANSPARENT, 20f, 0)
         setOnClickListener { onClick() }
     }
 
-    private fun renderTabs() {
-        tabsRow.removeAllViews()
+    private fun updateTabButton() {
+        if (::tabButton.isInitialized) tabButton.text = "□${tabs.size}"
+    }
+
+    private fun showTabManager() {
+        persistCurrentTabUrl()
+        saveTabs()
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(4), dp(14), dp(8))
+        }
+
         tabs.forEachIndexed { index, tab ->
-            val active = index == activeTabIndex
-            val chip = LinearLayout(this).apply {
+            val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), 0, dp(4), 0)
+                setPadding(dp(12), dp(5), dp(4), dp(5))
                 background = roundedBackground(
-                    if (active) ACTIVE_TAB_COLOR else INPUT_COLOR,
-                    if (active) ACTIVE_BORDER_COLOR else BORDER_COLOR,
-                    15f
+                    if (index == activeTabIndex) ACTIVE_TAB_COLOR else CARD_COLOR,
+                    if (index == activeTabIndex) ACTIVE_BORDER_COLOR else BORDER_COLOR,
+                    16f
                 )
-                setOnClickListener { switchToTab(index) }
             }
-            val label = TextView(this).apply {
-                text = tab.title.ifBlank { hostLabel(tab.url) }.take(22)
-                textSize = 12f
+            val info = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(4), dp(4), dp(4))
+                setOnClickListener {
+                    switchToTab(index)
+                    (parent?.parent as? AlertDialog)?.dismiss()
+                }
+            }
+            val title = TextView(this).apply {
+                text = tab.title.ifBlank { hostLabel(tab.url) }.take(38)
+                textSize = 14f
                 setTextColor(TEXT_COLOR)
                 maxLines = 1
-                setPadding(0, 0, dp(8), 0)
             }
-            val close = TextView(this).apply {
-                text = "×"
-                textSize = 18f
-                gravity = Gravity.CENTER
+            val host = TextView(this).apply {
+                text = hostLabel(tab.url)
+                textSize = 11f
                 setTextColor(MUTED_TEXT_COLOR)
-                setPadding(dp(6), 0, dp(6), 0)
-                setOnClickListener { closeTab(index) }
+                maxLines = 1
             }
-            chip.addView(label, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)))
-            chip.addView(close, LinearLayout.LayoutParams(dp(30), dp(32)))
-            tabsRow.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
-                marginEnd = dp(6)
+            info.addView(title)
+            info.addView(host)
+
+            val close = Button(this).apply {
+                text = "×"
+                isAllCaps = false
+                textSize = 18f
+                setTextColor(MUTED_TEXT_COLOR)
+                minWidth = 0
+                minHeight = 0
+                setPadding(0, 0, 0, 0)
+                background = roundedBackground(Color.TRANSPARENT, Color.TRANSPARENT, 16f, 0)
+            }
+            row.addView(info, LinearLayout.LayoutParams(0, dp(54), 1f))
+            row.addView(close, LinearLayout.LayoutParams(dp(40), dp(40)))
+            container.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)).apply {
+                bottomMargin = dp(7)
             })
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Tabs")
+            .setView(container)
+            .setPositiveButton("+ New tab", null)
+            .setNegativeButton("Done", null)
+            .create()
+
+        container.childrenButtonsForClose(dialog)
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (tabs.size >= MAX_TABS) {
+                    Toast.makeText(this, "Maximum $MAX_TABS tabs", Toast.LENGTH_SHORT).show()
+                } else {
+                    newTab()
+                    dialog.dismiss()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun LinearLayout.childrenButtonsForClose(dialog: AlertDialog) {
+        for (i in 0 until childCount) {
+            val row = getChildAt(i) as? LinearLayout ?: continue
+            val close = row.getChildAt(row.childCount - 1) as? Button ?: continue
+            val index = i
+            close.setOnClickListener {
+                closeTab(index)
+                dialog.dismiss()
+            }
         }
     }
 
+    private fun showBrowserMenu() {
+        val items = arrayOf("New tab", "Reload", "Clear cache now")
+        AlertDialog.Builder(this)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> if (tabs.size < MAX_TABS) newTab() else Toast.makeText(this, "Maximum $MAX_TABS tabs", Toast.LENGTH_SHORT).show()
+                    1 -> if (::webView.isInitialized && !webViewDestroyed) webView.reload()
+                    2 -> {
+                        clearBrowserCache()
+                        Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .show()
+    }
+
     private fun newTab(url: String = HOME_URL) {
+        if (tabs.size >= MAX_TABS) return
         tabs.add(BrowserTab(url, "New tab"))
         activeTabIndex = tabs.lastIndex
         saveTabs()
-        renderTabs()
+        updateTabButton()
         openActiveTab()
     }
 
@@ -230,7 +304,7 @@ class MainActivity : AppCompatActivity() {
         persistCurrentTabUrl()
         activeTabIndex = index
         saveTabs()
-        renderTabs()
+        updateTabButton()
         openActiveTab()
     }
 
@@ -248,7 +322,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         saveTabs()
-        renderTabs()
+        updateTabButton()
         openActiveTab()
     }
 
@@ -266,7 +340,7 @@ class MainActivity : AppCompatActivity() {
 
         val tab = tabs[activeTabIndex]
         currentPageUrl = tab.url
-        address.setText(tab.url)
+        address.setText(displayAddress(tab.url))
 
         webView = WebView(this)
         webViewDestroyed = false
@@ -301,7 +375,6 @@ class MainActivity : AppCompatActivity() {
                 if (clean.isNotEmpty()) {
                     tabs[activeTabIndex].title = clean.take(40)
                     saveTabs()
-                    renderTabs()
                 }
             }
 
@@ -332,7 +405,7 @@ class MainActivity : AppCompatActivity() {
                 if (view !== webView || activeTabIndex !in tabs.indices) return
                 currentPageUrl = url
                 tabs[activeTabIndex].url = url
-                address.setText(url)
+                if (!address.hasFocus()) address.setText(displayAddress(url))
                 clearDetectedMedia()
                 saveTabs()
                 if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
@@ -343,7 +416,7 @@ class MainActivity : AppCompatActivity() {
                 if (view !== webView || activeTabIndex !in tabs.indices) return
                 currentPageUrl = url
                 tabs[activeTabIndex].url = url
-                address.setText(url)
+                if (!address.hasFocus()) address.setText(displayAddress(url))
                 saveTabs()
                 view.evaluateJavascript(COSMETIC_AD_GUARD, null)
                 if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
@@ -364,6 +437,15 @@ class MainActivity : AppCompatActivity() {
         webContainer.removeAllViews()
         webContainer.addView(webView)
         webView.loadUrl(tab.url)
+    }
+
+    private fun displayAddress(url: String?): String {
+        if (url.isNullOrBlank()) return ""
+        return runCatching {
+            val uri = Uri.parse(url)
+            val host = uri.host?.removePrefix("www.").orEmpty()
+            if (host.isNotBlank()) host else url
+        }.getOrDefault(url)
     }
 
     private fun loadInActiveTab(input: String) {
@@ -392,9 +474,7 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() = handleBack()
 
     private fun clearBrowserCache() {
-        if (::webView.isInitialized && !webViewDestroyed) {
-            runCatching { webView.clearCache(true) }
-        }
+        if (::webView.isInitialized && !webViewDestroyed) runCatching { webView.clearCache(true) }
         runCatching { applicationContext.cacheDir.listFiles()?.forEach { it.deleteRecursively() } }
         runCatching { CookieManager.getInstance().flush() }
     }
@@ -431,9 +511,7 @@ class MainActivity : AppCompatActivity() {
     private fun saveTabs() {
         if (tabs.isEmpty()) return
         val array = JSONArray()
-        tabs.forEach { tab ->
-            array.put(JSONObject().put("url", tab.url).put("title", tab.title))
-        }
+        tabs.forEach { tab -> array.put(JSONObject().put("url", tab.url).put("title", tab.title)) }
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString(KEY_TABS, array.toString())
             .putInt(KEY_ACTIVE_TAB, activeTabIndex.coerceIn(0, tabs.lastIndex))
@@ -452,8 +530,9 @@ class MainActivity : AppCompatActivity() {
     private fun updateMediaButton() {
         runOnUiThread {
             val count = synchronized(mediaLock) { mediaItems.size }
-            mediaButton.text = if (count > 0) "↓ $count" else "↓"
+            mediaButton.text = if (count > 0) "↓$count" else "↓"
             mediaButton.isEnabled = count > 0
+            mediaButton.visibility = if (count > 0) View.VISIBLE else View.GONE
         }
     }
 
@@ -537,10 +616,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMediaList() {
         val snapshot = synchronized(mediaLock) { mediaItems.values.toList() }
-        if (snapshot.isEmpty()) {
-            Toast.makeText(this, "No video or audio detected yet", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (snapshot.isEmpty()) return
         val labels = snapshot.map { item ->
             val kind = when (item.kind) {
                 MediaKind.VIDEO -> "VIDEO"
@@ -681,10 +757,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun squareParams(size: Int) = LinearLayout.LayoutParams(dp(size), dp(size))
 
-    private fun roundedBackground(fill: Int, stroke: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
+    private fun roundedBackground(fill: Int, stroke: Int, radiusDp: Float, strokeWidth: Int = 1): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         setColor(fill)
-        setStroke(dp(1), stroke)
+        if (strokeWidth > 0) setStroke(dp(strokeWidth), stroke)
         cornerRadius = dp(radiusDp.toInt()).toFloat()
     }
 
@@ -709,11 +785,13 @@ class MainActivity : AppCompatActivity() {
         private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "mp4a", "aac", "ogg", "oga", "opus", "wav", "flac")
 
         private val SURFACE_COLOR = Color.rgb(250, 250, 250)
-        private val INPUT_COLOR = Color.rgb(245, 245, 245)
-        private val BORDER_COLOR = Color.rgb(225, 225, 225)
-        private val ACTIVE_TAB_COLOR = Color.rgb(232, 238, 255)
-        private val ACTIVE_BORDER_COLOR = Color.rgb(180, 195, 245)
-        private val TEXT_COLOR = Color.rgb(30, 30, 30)
+        private val INPUT_COLOR = Color.rgb(243, 243, 243)
+        private val BUTTON_COLOR = Color.rgb(247, 247, 247)
+        private val CARD_COLOR = Color.rgb(252, 252, 252)
+        private val BORDER_COLOR = Color.rgb(224, 224, 224)
+        private val ACTIVE_TAB_COLOR = Color.rgb(238, 242, 252)
+        private val ACTIVE_BORDER_COLOR = Color.rgb(188, 198, 228)
+        private val TEXT_COLOR = Color.rgb(28, 28, 28)
         private val MUTED_TEXT_COLOR = Color.rgb(110, 110, 110)
 
         private const val MEDIA_SCAN_SCRIPT = """
