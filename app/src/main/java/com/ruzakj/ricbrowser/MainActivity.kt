@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private var currentPageUrl: String? = null
 
     private var webViewDestroyed = false
+    private var transientDataCleared = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,7 +118,12 @@ class MainActivity : AppCompatActivity() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
                 val scheme = uri.scheme?.lowercase().orEmpty()
-                if (scheme == "http" || scheme == "https") return false
+
+                if (scheme == "http" || scheme == "https") {
+                    if (AdBlocker.shouldBlock(uri.toString(), currentPageUrl)) return true
+                    return false
+                }
+
                 return openExternal(uri)
             }
 
@@ -147,6 +153,7 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 currentPageUrl = url
                 address.setText(url)
+                view.evaluateJavascript(COSMETIC_AD_GUARD, null)
                 if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
             }
 
@@ -192,6 +199,15 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(url)
     }
 
+    private fun clearTransientBrowserData() {
+        if (transientDataCleared || !::webView.isInitialized || webViewDestroyed) return
+        transientDataCleared = true
+        runCatching { webView.clearCache(true) }
+        runCatching { webView.clearHistory() }
+        runCatching { webView.clearFormData() }
+        runCatching { CookieManager.getInstance().flush() }
+    }
+
     private fun isYouTube(url: String): Boolean = try {
         val host = Uri.parse(url).host?.lowercase() ?: return false
         host == "youtube.com" || host.endsWith(".youtube.com")
@@ -207,6 +223,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStop() {
+        if (isFinishing) clearTransientBrowserData()
+        super.onStop()
+    }
+
     override fun onPause() {
         if (::webView.isInitialized && !webViewDestroyed) webView.onPause()
         super.onPause()
@@ -219,6 +240,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         if (::webView.isInitialized && !webViewDestroyed) {
+            clearTransientBrowserData()
             webViewDestroyed = true
             runCatching { webView.stopLoading() }
             runCatching { webView.webChromeClient = null }
@@ -229,6 +251,33 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val COSMETIC_AD_GUARD = """
+(() => {
+  if (window.__ricCosmeticGuard) return;
+  window.__ricCosmeticGuard = true;
+  const selectors = [
+    '.adsbygoogle',
+    '[id^="google_ads_"]',
+    '[data-ad-client]',
+    '[data-ad-slot]',
+    'iframe[src*="doubleclick.net"]',
+    'iframe[src*="googlesyndication.com"]',
+    'iframe[src*="googleadservices.com"]',
+    'iframe[src*="taboola.com"]',
+    'iframe[src*="outbrain.com"]',
+    'iframe[src*="adnxs.com"]',
+    'iframe[src*="criteo.com"]'
+  ];
+  const clean = () => {
+    try {
+      document.querySelectorAll(selectors.join(',')).forEach(el => el.remove());
+    } catch (_) {}
+  };
+  clean();
+  new MutationObserver(clean).observe(document.documentElement, {childList:true, subtree:true});
+})();
+"""
+
         private const val YOUTUBE_GUARD = """
 (() => {
   if (window.__ricYtGuard) return; window.__ricYtGuard = true;
