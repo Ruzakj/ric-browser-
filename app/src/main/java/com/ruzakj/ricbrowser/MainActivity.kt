@@ -25,6 +25,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var address: EditText
     private lateinit var progress: ProgressBar
 
+    @Volatile
+    private var currentPageUrl: String? = null
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +77,7 @@ class MainActivity : AppCompatActivity() {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            databaseEnabled = true
             mediaPlaybackRequiresUserGesture = true
             builtInZoomControls = false
             displayZoomControls = false
@@ -110,27 +114,38 @@ class MainActivity : AppCompatActivity() {
                 view: WebView,
                 request: WebResourceRequest
             ): WebResourceResponse? {
-                return if (AdBlocker.shouldBlock(request.url.toString(), view.url)) {
-                    AdBlocker.emptyResponse()
-                } else {
+                // IMPORTANT: this callback is executed on a background thread.
+                // Do not call WebView methods (including view.url) from here.
+                return try {
+                    if (AdBlocker.shouldBlock(request.url.toString(), currentPageUrl)) {
+                        AdBlocker.emptyResponse()
+                    } else {
+                        super.shouldInterceptRequest(view, request)
+                    }
+                } catch (_: Throwable) {
+                    // Filtering must never be able to crash the browser.
                     super.shouldInterceptRequest(view, request)
                 }
             }
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                currentPageUrl = url
                 address.setText(url)
                 if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
+                currentPageUrl = url
                 address.setText(url)
                 if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
             }
 
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                val lastUrl = currentPageUrl ?: "https://www.google.com"
                 Toast.makeText(this@MainActivity, "WebView restarted", Toast.LENGTH_SHORT).show()
+                view.destroy()
                 recreate()
                 return true
             }
@@ -163,6 +178,7 @@ class MainActivity : AppCompatActivity() {
             value.contains(".") && !value.contains(" ") -> "https://$value"
             else -> "https://www.google.com/search?q=" + Uri.encode(value)
         }
+        currentPageUrl = url
         webView.loadUrl(url)
     }
 
