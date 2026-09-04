@@ -19,6 +19,8 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -28,12 +30,20 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var currentPageUrl: String? = null
 
+    private var webViewDestroyed = false
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
         }
 
         address = EditText(this).apply {
@@ -68,6 +78,7 @@ class MainActivity : AppCompatActivity() {
         )
         root.addView(webView)
         setContentView(root)
+        ViewCompat.requestApplyInsets(root)
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -114,8 +125,6 @@ class MainActivity : AppCompatActivity() {
                 view: WebView,
                 request: WebResourceRequest
             ): WebResourceResponse? {
-                // IMPORTANT: this callback is executed on a background thread.
-                // Do not call WebView methods (including view.url) from here.
                 return try {
                     if (AdBlocker.shouldBlock(request.url.toString(), currentPageUrl)) {
                         AdBlocker.emptyResponse()
@@ -123,7 +132,6 @@ class MainActivity : AppCompatActivity() {
                         super.shouldInterceptRequest(view, request)
                     }
                 } catch (_: Throwable) {
-                    // Filtering must never be able to crash the browser.
                     super.shouldInterceptRequest(view, request)
                 }
             }
@@ -143,9 +151,11 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                val lastUrl = currentPageUrl ?: "https://www.google.com"
+                if (!webViewDestroyed) {
+                    webViewDestroyed = true
+                    runCatching { view.destroy() }
+                }
                 Toast.makeText(this@MainActivity, "WebView restarted", Toast.LENGTH_SHORT).show()
-                view.destroy()
                 recreate()
                 return true
             }
@@ -190,7 +200,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
-        if (::webView.isInitialized && webView.canGoBack()) {
+        if (::webView.isInitialized && !webViewDestroyed && webView.canGoBack()) {
             webView.goBack()
         } else {
             super.onBackPressed()
@@ -198,21 +208,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
-        if (::webView.isInitialized) webView.onPause()
+        if (::webView.isInitialized && !webViewDestroyed) webView.onPause()
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
-        if (::webView.isInitialized) webView.onResume()
+        if (::webView.isInitialized && !webViewDestroyed) webView.onResume()
     }
 
     override fun onDestroy() {
-        if (::webView.isInitialized) {
-            webView.stopLoading()
-            webView.webChromeClient = null
-            webView.webViewClient = WebViewClient()
-            webView.destroy()
+        if (::webView.isInitialized && !webViewDestroyed) {
+            webViewDestroyed = true
+            runCatching { webView.stopLoading() }
+            runCatching { webView.webChromeClient = null }
+            runCatching { webView.webViewClient = WebViewClient() }
+            runCatching { webView.destroy() }
         }
         super.onDestroy()
     }
