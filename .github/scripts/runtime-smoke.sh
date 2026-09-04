@@ -25,51 +25,66 @@ dump_ui() {
   adb pull /sdcard/ric-window.xml /tmp/ric-window.xml >/dev/null
 }
 
-tap_tab_counter() {
+tap_toolbar_button_from_right() {
+  local offset="$1"
   dump_ui
-  read -r X Y < <(python3 - <<'PY'
-import re
+  read -r X Y < <(OFFSET="$offset" python3 - <<'PY'
+import os,re
 import xml.etree.ElementTree as ET
-root = ET.parse('/tmp/ric-window.xml').getroot()
+root=ET.parse('/tmp/ric-window.xml').getroot()
 buttons=[]
 for node in root.iter('node'):
-    if node.attrib.get('class') != 'android.widget.Button':
+    if node.attrib.get('class')!='android.widget.Button':
         continue
-    m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds',''))
+    m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',node.attrib.get('bounds',''))
     if not m:
         continue
     x1,y1,x2,y2=map(int,m.groups())
     cy=(y1+y2)//2
-    if cy < 450:
+    if cy<450:
         buttons.append(((x1+x2)//2,cy,node.attrib.get('text','')))
 buttons.sort(key=lambda v:v[0])
-if len(buttons) < 3:
-    raise SystemExit(f'Expected compact toolbar buttons, found {buttons}')
-# Compact toolbar order is Back, optional Media, Tab Counter, Menu.
-# With no media on startup, the tab counter is the second button from the right.
-x,y,text=buttons[-2]
+offset=int(os.environ['OFFSET'])
+if len(buttons)<=offset:
+    raise SystemExit(f'Not enough toolbar buttons: {buttons}')
+x,y,_=buttons[-1-offset]
 print(x,y)
 PY
 )
   adb shell input tap "$X" "$Y"
 }
 
-tap_new_tab() {
+assert_ui_text() {
+  local needle="$1"
   dump_ui
-  read -r X Y < <(python3 - <<'PY'
-import re
+  NEEDLE="$needle" python3 - <<'PY'
+import os
 import xml.etree.ElementTree as ET
+needle=os.environ['NEEDLE']
+root=ET.parse('/tmp/ric-window.xml').getroot()
+texts=[n.attrib.get('text','') for n in root.iter('node')]
+if not any(needle in t for t in texts):
+    raise SystemExit(f'UI text not found: {needle}; texts={texts}')
+PY
+}
+
+tap_ui_text() {
+  local needle="$1"
+  dump_ui
+  read -r X Y < <(NEEDLE="$needle" python3 - <<'PY'
+import os,re
+import xml.etree.ElementTree as ET
+needle=os.environ['NEEDLE']
 root=ET.parse('/tmp/ric-window.xml').getroot()
 for node in root.iter('node'):
-    text=node.attrib.get('text','')
-    if 'New tab' not in text:
+    if needle not in node.attrib.get('text',''):
         continue
-    m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds',''))
+    m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',node.attrib.get('bounds',''))
     if m:
         x1,y1,x2,y2=map(int,m.groups())
         print((x1+x2)//2,(y1+y2)//2)
         raise SystemExit(0)
-raise SystemExit('New tab action not found in tab manager')
+raise SystemExit(f'UI text not tappable: {needle}')
 PY
 )
   adb shell input tap "$X" "$Y"
@@ -85,17 +100,23 @@ adb logcat -c
 adb shell am start -W -n "$ACTIVITY" | tee /tmp/start1.txt
 grep -q 'Status: ok' /tmp/start1.txt
 sleep 8
-PID=$(adb shell pidof "$PACKAGE" | tr -d '\r')
-test -n "$PID"
+test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 
 echo '=== LOGCAT #1 ==='
 adb logcat -d -v threadtime > /tmp/logcat1.txt
 fail_on_runtime_blocker /tmp/logcat1.txt
 
-echo '=== COMPACT TAB MANAGER / MULTI-TAB CREATE ==='
-tap_tab_counter
+echo '=== COMPACT TAB MANAGER ==='
+tap_toolbar_button_from_right 1
 sleep 1
-tap_new_tab
+assert_ui_text 'Tabs'
+adb shell input keyevent KEYCODE_BACK
+sleep 1
+
+echo '=== MULTI-TAB CREATE FROM MENU ==='
+tap_toolbar_button_from_right 0
+sleep 1
+tap_ui_text 'New tab'
 sleep 4
 COUNT=$(saved_tab_count)
 test "${COUNT:-0}" -ge 2
