@@ -119,7 +119,8 @@ assert_ui_text 'Extensions ('
 tap_ui_text 'Extensions ('
 sleep 1
 assert_ui_text 'Extensions'
-assert_ui_text 'No extensions installed'
+assert_ui_text 'Ric Shortlink Auto Helper'
+adb shell run-as "$PACKAGE" cat shared_prefs/ric_extensions.xml | grep -q 'ric.shortlink.auto-helper'
 adb shell input keyevent KEYCODE_BACK
 sleep 1
 
@@ -154,6 +155,7 @@ test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 COUNT=$(saved_tab_count)
 test "${COUNT:-0}" -ge 2
 echo "SAVED_TABS_AFTER_RESTART=$COUNT"
+adb shell run-as "$PACKAGE" cat shared_prefs/ric_extensions.xml | grep -q 'ric.shortlink.auto-helper'
 
 echo '=== LOGCAT #2 ==='
 adb logcat -d -v threadtime > /tmp/logcat2.txt
@@ -162,4 +164,5 @@ fail_on_runtime_blocker /tmp/logcat2.txt
 echo 'RUNTIME_SMOKE_TEST=PASS'
 echo 'COMPACT_TAB_MANAGER=PASS'
 echo 'EXTENSIONS_MANAGER_UI=PASS'
+echo 'BUILTIN_SHORTLINK_HELPER=PASS'
 echo 'MULTI_TAB_PERSISTENCE=PASS'
