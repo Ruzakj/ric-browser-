@@ -20,24 +20,56 @@ saved_tab_count() {
     | tr -d '[:space:]'
 }
 
-tap_text_matching() {
-  local pattern="$1"
+dump_ui() {
   adb shell uiautomator dump /sdcard/ric-window.xml >/dev/null
   adb pull /sdcard/ric-window.xml /tmp/ric-window.xml >/dev/null
-  read -r X Y < <(PATTERN="$pattern" python3 - <<'PY'
-import os, re
+}
+
+tap_tab_counter() {
+  dump_ui
+  read -r X Y < <(python3 - <<'PY'
+import re
 import xml.etree.ElementTree as ET
-pattern = re.compile(os.environ['PATTERN'])
 root = ET.parse('/tmp/ric-window.xml').getroot()
+buttons=[]
 for node in root.iter('node'):
-    text = node.attrib.get('text','')
-    if pattern.search(text):
-        m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds',''))
-        if m:
-            x1,y1,x2,y2 = map(int, m.groups())
-            print((x1+x2)//2, (y1+y2)//2)
-            raise SystemExit(0)
-raise SystemExit(f'UI node not found: {pattern.pattern}')
+    if node.attrib.get('class') != 'android.widget.Button':
+        continue
+    m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds',''))
+    if not m:
+        continue
+    x1,y1,x2,y2=map(int,m.groups())
+    cy=(y1+y2)//2
+    if cy < 450:
+        buttons.append(((x1+x2)//2,cy,node.attrib.get('text','')))
+buttons.sort(key=lambda v:v[0])
+if len(buttons) < 3:
+    raise SystemExit(f'Expected compact toolbar buttons, found {buttons}')
+# Compact toolbar order is Back, optional Media, Tab Counter, Menu.
+# With no media on startup, the tab counter is the second button from the right.
+x,y,text=buttons[-2]
+print(x,y)
+PY
+)
+  adb shell input tap "$X" "$Y"
+}
+
+tap_new_tab() {
+  dump_ui
+  read -r X Y < <(python3 - <<'PY'
+import re
+import xml.etree.ElementTree as ET
+root=ET.parse('/tmp/ric-window.xml').getroot()
+for node in root.iter('node'):
+    text=node.attrib.get('text','')
+    if 'New tab' not in text:
+        continue
+    m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds',''))
+    if m:
+        x1,y1,x2,y2=map(int,m.groups())
+        print((x1+x2)//2,(y1+y2)//2)
+        raise SystemExit(0)
+raise SystemExit('New tab action not found in tab manager')
 PY
 )
   adb shell input tap "$X" "$Y"
@@ -61,9 +93,9 @@ adb logcat -d -v threadtime > /tmp/logcat1.txt
 fail_on_runtime_blocker /tmp/logcat1.txt
 
 echo '=== COMPACT TAB MANAGER / MULTI-TAB CREATE ==='
-tap_text_matching '^□[0-9]+$'
+tap_tab_counter
 sleep 1
-tap_text_matching '^\+ New tab$'
+tap_new_tab
 sleep 4
 COUNT=$(saved_tab_count)
 test "${COUNT:-0}" -ge 2
