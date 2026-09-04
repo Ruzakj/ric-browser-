@@ -20,6 +20,29 @@ saved_tab_count() {
     | tr -d '[:space:]'
 }
 
+tap_text_matching() {
+  local pattern="$1"
+  adb shell uiautomator dump /sdcard/ric-window.xml >/dev/null
+  adb pull /sdcard/ric-window.xml /tmp/ric-window.xml >/dev/null
+  read -r X Y < <(PATTERN="$pattern" python3 - <<'PY'
+import os, re
+import xml.etree.ElementTree as ET
+pattern = re.compile(os.environ['PATTERN'])
+root = ET.parse('/tmp/ric-window.xml').getroot()
+for node in root.iter('node'):
+    text = node.attrib.get('text','')
+    if pattern.search(text):
+        m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds',''))
+        if m:
+            x1,y1,x2,y2 = map(int, m.groups())
+            print((x1+x2)//2, (y1+y2)//2)
+            raise SystemExit(0)
+raise SystemExit(f'UI node not found: {pattern.pattern}')
+PY
+)
+  adb shell input tap "$X" "$Y"
+}
+
 echo '=== INSTALL ==='
 test -s "$APK"
 adb install -r "$APK"
@@ -37,24 +60,10 @@ echo '=== LOGCAT #1 ==='
 adb logcat -d -v threadtime > /tmp/logcat1.txt
 fail_on_runtime_blocker /tmp/logcat1.txt
 
-echo '=== MULTI-TAB CREATE ==='
-adb shell uiautomator dump /sdcard/ric-window.xml >/dev/null
-adb pull /sdcard/ric-window.xml /tmp/ric-window.xml >/dev/null
-read -r TAB_X TAB_Y < <(python3 - <<'PY'
-import re
-import xml.etree.ElementTree as ET
-root = ET.parse('/tmp/ric-window.xml').getroot()
-for node in root.iter('node'):
-    if node.attrib.get('text') == '+':
-        m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds',''))
-        if m:
-            x1,y1,x2,y2 = map(int, m.groups())
-            print((x1+x2)//2, (y1+y2)//2)
-            raise SystemExit(0)
-raise SystemExit('New tab button not found')
-PY
-)
-adb shell input tap "$TAB_X" "$TAB_Y"
+echo '=== COMPACT TAB MANAGER / MULTI-TAB CREATE ==='
+tap_text_matching '^□[0-9]+$'
+sleep 1
+tap_text_matching '^\+ New tab$'
 sleep 4
 COUNT=$(saved_tab_count)
 test "${COUNT:-0}" -ge 2
@@ -88,4 +97,5 @@ adb logcat -d -v threadtime > /tmp/logcat2.txt
 fail_on_runtime_blocker /tmp/logcat2.txt
 
 echo 'RUNTIME_SMOKE_TEST=PASS'
+echo 'COMPACT_TAB_MANAGER=PASS'
 echo 'MULTI_TAB_PERSISTENCE=PASS'
