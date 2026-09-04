@@ -26,10 +26,12 @@ class ExtensionManager(private val context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun list(): List<Extension> = loadAll()
+    fun list(): List<Extension> = loadAllWithBuiltIns()
+
+    fun isBuiltIn(id: String): Boolean = id == BUILTIN_SHORTLINK_ID
 
     fun setEnabled(id: String, enabled: Boolean) {
-        val all = loadAll().toMutableList()
+        val all = loadAllWithBuiltIns().toMutableList()
         val index = all.indexOfFirst { it.id == id }
         if (index >= 0) {
             all[index] = all[index].copy(enabled = enabled)
@@ -38,17 +40,18 @@ class ExtensionManager(private val context: Context) {
     }
 
     fun remove(id: String) {
-        saveAll(loadAll().filterNot { it.id == id })
+        if (isBuiltIn(id)) {
+            setEnabled(id, false)
+            return
+        }
+        saveAll(loadAllWithBuiltIns().filterNot { it.id == id })
     }
 
     fun import(uri: Uri): Result<Extension> = runCatching {
         val name = queryName(uri).lowercase(Locale.ROOT)
-        val extension = if (name.endsWith(".ricx") || name.endsWith(".zip")) {
-            importRicx(uri)
-        } else {
-            importUserScript(uri)
-        }
-        val all = loadAll().toMutableList()
+        val extension = if (name.endsWith(".ricx") || name.endsWith(".zip")) importRicx(uri) else importUserScript(uri)
+        require(!isBuiltIn(extension.id)) { "Reserved extension id" }
+        val all = loadAllWithBuiltIns().toMutableList()
         all.removeAll { it.id == extension.id || (it.name == extension.name && it.type == extension.type) }
         all.add(extension)
         saveAll(all)
@@ -56,7 +59,7 @@ class ExtensionManager(private val context: Context) {
     }
 
     fun javascriptFor(url: String, phase: String): List<String> {
-        return loadAll().asSequence()
+        return loadAllWithBuiltIns().asSequence()
             .filter { it.enabled && matches(it, url) }
             .filter { phaseMatches(it.runAt, phase) }
             .map { buildInjection(it) }
@@ -148,8 +151,7 @@ class ExtensionManager(private val context: Context) {
         val excludes = jsonStringList(manifest.optJSONArray("exclude_matches"))
         require(script.isNotBlank() || css.isNotBlank()) { "content.js or style.css is required" }
         return Extension(
-            id = manifest.optString("id").trim().takeIf { it.matches(Regex("[A-Za-z0-9._-]{3,80}")) }
-                ?: stableId("ricx:$displayName"),
+            id = manifest.optString("id").trim().takeIf { it.matches(Regex("[A-Za-z0-9._-]{3,80}")) } ?: stableId("ricx:$displayName"),
             name = displayName.take(80),
             version = manifest.optString("version", "1.0").take(24),
             description = manifest.optString("description").take(180),
@@ -205,9 +207,7 @@ class ExtensionManager(private val context: Context) {
 
     private fun jsonStringList(array: JSONArray?): List<String> {
         if (array == null) return emptyList()
-        return buildList {
-            for (i in 0 until array.length()) array.optString(i).takeIf { it.isNotBlank() }?.let(::add)
-        }
+        return buildList { for (i in 0 until array.length()) array.optString(i).takeIf { it.isNotBlank() }?.let(::add) }
     }
 
     private fun queryName(uri: Uri): String {
@@ -252,28 +252,36 @@ class ExtensionManager(private val context: Context) {
 
     private fun stableId(seed: String): String = UUID.nameUUIDFromBytes(seed.lowercase(Locale.ROOT).toByteArray()).toString()
 
-    private fun loadAll(): List<Extension> {
+    private fun loadAllWithBuiltIns(): List<Extension> {
+        val stored = loadStored().toMutableList()
+        val existing = stored.indexOfFirst { it.id == BUILTIN_SHORTLINK_ID }
+        if (existing < 0) {
+            stored.add(0, builtInShortlinkHelper())
+            saveAll(stored)
+        }
+        return stored
+    }
+
+    private fun loadStored(): List<Extension> {
         val raw = prefs.getString(KEY_EXTENSIONS, null) ?: return emptyList()
         return runCatching {
             val array = JSONArray(raw)
             buildList {
                 for (i in 0 until array.length()) {
                     val o = array.optJSONObject(i) ?: continue
-                    add(
-                        Extension(
-                            id = o.optString("id"),
-                            name = o.optString("name"),
-                            version = o.optString("version", "1.0"),
-                            description = o.optString("description"),
-                            matches = jsonStringList(o.optJSONArray("matches")),
-                            excludes = jsonStringList(o.optJSONArray("excludes")),
-                            runAt = o.optString("runAt", "document-end"),
-                            script = o.optString("script"),
-                            css = o.optString("css"),
-                            type = o.optString("type", "UserScript"),
-                            enabled = o.optBoolean("enabled", true)
-                        )
-                    )
+                    add(Extension(
+                        id = o.optString("id"),
+                        name = o.optString("name"),
+                        version = o.optString("version", "1.0"),
+                        description = o.optString("description"),
+                        matches = jsonStringList(o.optJSONArray("matches")),
+                        excludes = jsonStringList(o.optJSONArray("excludes")),
+                        runAt = o.optString("runAt", "document-end"),
+                        script = o.optString("script"),
+                        css = o.optString("css"),
+                        type = o.optString("type", "UserScript"),
+                        enabled = o.optBoolean("enabled", true)
+                    ))
                 }
             }
         }.getOrDefault(emptyList())
@@ -282,23 +290,35 @@ class ExtensionManager(private val context: Context) {
     private fun saveAll(items: List<Extension>) {
         val array = JSONArray()
         items.take(MAX_EXTENSIONS).forEach { e ->
-            array.put(
-                JSONObject()
-                    .put("id", e.id)
-                    .put("name", e.name)
-                    .put("version", e.version)
-                    .put("description", e.description)
-                    .put("matches", JSONArray(e.matches))
-                    .put("excludes", JSONArray(e.excludes))
-                    .put("runAt", e.runAt)
-                    .put("script", e.script)
-                    .put("css", e.css)
-                    .put("type", e.type)
-                    .put("enabled", e.enabled)
-            )
+            array.put(JSONObject()
+                .put("id", e.id)
+                .put("name", e.name)
+                .put("version", e.version)
+                .put("description", e.description)
+                .put("matches", JSONArray(e.matches))
+                .put("excludes", JSONArray(e.excludes))
+                .put("runAt", e.runAt)
+                .put("script", e.script)
+                .put("css", e.css)
+                .put("type", e.type)
+                .put("enabled", e.enabled))
         }
         prefs.edit().putString(KEY_EXTENSIONS, array.toString()).apply()
     }
+
+    private fun builtInShortlinkHelper(): Extension = Extension(
+        id = BUILTIN_SHORTLINK_ID,
+        name = "Ric Shortlink Auto Helper",
+        version = "1.0.0",
+        description = "Auto-handles common shortlink countdowns and Continue/Next/Get Link/Skip buttons. Pauses when a CAPTCHA or anti-bot challenge is visible and resumes after manual completion.",
+        matches = listOf("*://*/*"),
+        excludes = emptyList(),
+        runAt = "document-end",
+        script = SHORTLINK_HELPER_SCRIPT,
+        css = "",
+        type = "Built-in Ric Extension",
+        enabled = true
+    )
 
     companion object {
         private const val PREFS = "ric_extensions"
@@ -306,5 +326,93 @@ class ExtensionManager(private val context: Context) {
         private const val MAX_EXTENSION_BYTES = 1024 * 1024
         private const val MAX_EXTENSIONS = 40
         private const val MAX_PATTERNS = 80
+        private const val BUILTIN_SHORTLINK_ID = "ric.shortlink.auto-helper"
+
+        // Adapted from the MIT-licensed ShortLink-Bypass project by MohammadKobirShah.
+        // Ric's version intentionally does not solve, click, or bypass CAPTCHA/anti-bot challenges.
+        private const val SHORTLINK_HELPER_SCRIPT = """
+(() => {
+  if (window.__ricShortlinkHelper) return;
+  window.__ricShortlinkHelper = true;
+
+  const labels = /^(continue|continue to|next|proceed|go|skip|skip ad|skip ads|get link|get url|generate link|open link|visit link|access link|lanjut|lewati|dapatkan link|buka link)$/i;
+  const timerSelectors = '.timer,.countdown,[id*=timer i],[class*=timer i],[id*=countdown i],[class*=countdown i]';
+  const knownSelectors = '#btn,.timerBtn,.continue-btn,.skip-btn,.get-link,.getlink,.get-link-button';
+
+  const visible = el => {
+    if (!el || !el.isConnected) return false;
+    const s = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    return s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0 && r.width > 1 && r.height > 1;
+  };
+
+  const captchaVisible = () => {
+    const selectors = [
+      'iframe[src*="recaptcha"]','iframe[src*="hcaptcha"]','iframe[src*="challenges.cloudflare.com"]',
+      '.g-recaptcha','.h-captcha','[data-sitekey]','cf-turnstile','.cf-turnstile',
+      '[class*="captcha" i]:not(input)','[id*="captcha" i]:not(input)'
+    ];
+    return selectors.some(sel => {
+      try { return Array.from(document.querySelectorAll(sel)).some(visible); } catch (_) { return false; }
+    });
+  };
+
+  const looksLikeShortlink = () => {
+    const host = location.hostname.toLowerCase();
+    if (/(gplinks|just2earn|linkvertise|lootlabs|work\.ink|short|shrink|url|link)/i.test(host)) return true;
+    if (document.querySelector(knownSelectors + ',' + timerSelectors)) return true;
+    return Array.from(document.querySelectorAll('button,a,input[type=button],input[type=submit]')).some(el => {
+      const text = (el.innerText || el.value || el.textContent || '').trim().replace(/\s+/g,' ');
+      return labels.test(text);
+    });
+  };
+
+  const accelerateClientTimer = () => {
+    if (!looksLikeShortlink() || captchaVisible()) return;
+    try { if (typeof window.count === 'number' && window.count > 0) window.count = 0; } catch (_) {}
+    try { if (typeof window.timer === 'number' && window.timer > 0) window.timer = 0; } catch (_) {}
+    document.querySelectorAll(timerSelectors).forEach(el => {
+      const text = (el.textContent || '').trim();
+      if (/^(?:wait\s*)?\d{1,3}(?:\s*(?:s|sec|secs|second|seconds|detik))?$/i.test(text)) el.textContent = '0';
+    });
+  };
+
+  const clickReady = () => {
+    if (!looksLikeShortlink() || captchaVisible()) return;
+    const candidates = Array.from(document.querySelectorAll(knownSelectors + ',button,a,input[type=button],input[type=submit]'));
+    for (const el of candidates) {
+      if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+      const text = (el.innerText || el.value || el.textContent || '').trim().replace(/\s+/g,' ');
+      const known = el.matches && el.matches(knownSelectors);
+      if (!known && !labels.test(text)) continue;
+      if (/captcha|robot|human|turnstile|cloudflare/i.test(text)) continue;
+      const href = el.getAttribute && el.getAttribute('href');
+      if (href && /^javascript:void/i.test(href)) continue;
+      el.click();
+      break;
+    }
+  };
+
+  const cleanPassiveOverlays = () => {
+    if (!looksLikeShortlink()) return;
+    ['#gads','.adbox','.wait-msg'].forEach(sel => {
+      try { document.querySelectorAll(sel).forEach(el => { if (!/captcha|robot|human/i.test(el.textContent || '')) el.style.display='none'; }); } catch (_) {}
+    });
+  };
+
+  const tick = () => {
+    if (document.hidden) return;
+    if (captchaVisible()) return;
+    accelerateClientTimer();
+    cleanPassiveOverlays();
+    clickReady();
+  };
+
+  const observer = new MutationObserver(() => { clearTimeout(window.__ricShortlinkMutation); window.__ricShortlinkMutation = setTimeout(tick, 120); });
+  observer.observe(document.documentElement, {childList:true,subtree:true,attributes:true,attributeFilter:['disabled','class','style','aria-disabled']});
+  setInterval(tick, 700);
+  setTimeout(tick, 250);
+})();
+"""
     }
 }
