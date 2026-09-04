@@ -1,4 +1,4 @@
-name: Android Build
+name: Android Build & Runtime QA
 
 on:
   push:
@@ -9,8 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-and-runtime-qa:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,8 +28,91 @@ jobs:
         with:
           gradle-version: '8.10'
 
-      - name: Build release APK
-        run: gradle --no-daemon :app:assembleRelease
+      - name: Clean, test and build debug/release
+        run: |
+          set -euo pipefail
+          gradle --no-daemon clean test :app:assembleDebug :app:assembleRelease --stacktrace
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          find app/build/outputs/apk/release -maxdepth 1 -type f -name '*-unsigned.apk' -size +0c | grep -q .
+
+      - name: APK static validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)
+          test -x "$AAPT"
+          "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-badging.txt"
+          grep -q "package: name='com.ruzakj.ricbrowser'" "$RUNNER_TEMP/apk-badging.txt"
+          grep -q "launchable-activity: name='com.ruzakj.ricbrowser.MainActivity'" "$RUNNER_TEMP/apk-badging.txt"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and runtime smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            PACKAGE="com.ruzakj.ricbrowser"
+            ACTIVITY="com.ruzakj.ricbrowser/.MainActivity"
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+
+            echo '=== INSTALL ==='
+            adb install -r "$APK"
+
+            echo '=== COLD START #1 ==='
+            adb shell am force-stop "$PACKAGE"
+            adb logcat -c
+            adb shell am start -W -n "$ACTIVITY" | tee /tmp/start1.txt
+            grep -q 'Status: ok' /tmp/start1.txt
+            sleep 8
+            PID=$(adb shell pidof "$PACKAGE" | tr -d '\r')
+            test -n "$PID"
+
+            echo '=== LOGCAT #1 ==='
+            adb logcat -d -v threadtime > /tmp/logcat1.txt
+            if grep -E "FATAL EXCEPTION|ANR in $PACKAGE|Process: $PACKAGE.*has died|AndroidRuntime.*$PACKAGE" /tmp/logcat1.txt; then
+              echo 'Runtime blocker found after cold start #1'
+              exit 1
+            fi
+
+            echo '=== BACKGROUND / FOREGROUND ==='
+            adb shell input keyevent KEYCODE_HOME
+            sleep 2
+            adb shell am start -W -n "$ACTIVITY" | tee /tmp/resume.txt
+            grep -q 'Status: ok' /tmp/resume.txt
+            sleep 3
+            test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+
+            echo '=== ANDROID BACK ==='
+            adb shell input keyevent KEYCODE_BACK
+            sleep 2
+
+            echo '=== COLD START #2 ==='
+            adb shell am force-stop "$PACKAGE"
+            adb logcat -c
+            adb shell am start -W -n "$ACTIVITY" | tee /tmp/start2.txt
+            grep -q 'Status: ok' /tmp/start2.txt
+            sleep 8
+            test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+
+            echo '=== LOGCAT #2 ==='
+            adb logcat -d -v threadtime > /tmp/logcat2.txt
+            if grep -E "FATAL EXCEPTION|ANR in $PACKAGE|Process: $PACKAGE.*has died|AndroidRuntime.*$PACKAGE" /tmp/logcat2.txt; then
+              echo 'Runtime blocker found after cold start #2'
+              exit 1
+            fi
+
+            echo 'RUNTIME_SMOKE_TEST=PASS'
 
       - name: Sign release APK
         shell: bash
@@ -35,11 +120,7 @@ jobs:
           set -euo pipefail
 
           UNSIGNED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*-unsigned.apk' | head -n 1)
-          if [ -z "${UNSIGNED_APK:-}" ]; then
-            echo "Unsigned release APK not found"
-            find app/build/outputs/apk/release -maxdepth 1 -type f -print || true
-            exit 1
-          fi
+          test -n "${UNSIGNED_APK:-}"
 
           SIGNED_APK="app/build/outputs/apk/release/ric-browser-release-signed.apk"
           KEYSTORE="$RUNNER_TEMP/ric-browser-release.keystore"
@@ -70,9 +151,9 @@ jobs:
           "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK"
           test -s "$SIGNED_APK"
 
-      - name: Upload signed APK
+      - name: Upload QA-passed signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: ric-browser-release-signed
+          name: ric-browser-release-signed-qa-passed
           path: app/build/outputs/apk/release/ric-browser-release-signed.apk
           if-no-files-found: error
