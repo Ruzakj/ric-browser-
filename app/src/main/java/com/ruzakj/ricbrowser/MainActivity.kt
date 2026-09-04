@@ -27,7 +27,7 @@ class MainActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         address = EditText(this).apply {
             hint = "Search or enter address"
-            singleLine = true
+            setSingleLine(true)
             setOnEditorActionListener { v, _, _ -> load(v.text.toString()); true }
         }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
