@@ -61,7 +61,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             PACKAGE="com.ruzakj.ricbrowser"
             ACTIVITY="com.ruzakj.ricbrowser/.MainActivity"
             APK="app/build/outputs/apk/debug/app-debug.apk"
