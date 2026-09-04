@@ -15,13 +15,11 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import androidx.appcompat.app.AppCompatActivity
-import io.github.edsuns.adfilter.AdFilter
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var address: EditText
     private lateinit var progress: ProgressBar
-    private val filter by lazy { AdFilter.get() }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,7 +50,6 @@ class MainActivity : AppCompatActivity() {
             userAgentString = userAgentString.replace("; wv", "")
             setSupportMultipleWindows(false)
         }
-        filter.setupWebView(webView)
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -62,11 +59,12 @@ class MainActivity : AppCompatActivity() {
             override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean = false
         }
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                filter.shouldIntercept(view, request).resourceResponse
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                return if (AdBlocker.shouldBlock(request.url.toString(), view.url)) AdBlocker.emptyResponse() else super.shouldInterceptRequest(view, request)
+            }
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                filter.performScript(view, url)
+                if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
             }
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
