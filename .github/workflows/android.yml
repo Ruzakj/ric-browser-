@@ -33,7 +33,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/release/app-release.apk"
+
+          UNSIGNED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*-unsigned.apk' | head -n 1)
+          if [ -z "${UNSIGNED_APK:-}" ]; then
+            echo "Unsigned release APK not found"
+            find app/build/outputs/apk/release -maxdepth 1 -type f -print || true
+            exit 1
+          fi
+
+          SIGNED_APK="app/build/outputs/apk/release/ric-browser-release-signed.apk"
           KEYSTORE="$RUNNER_TEMP/ric-browser-release.keystore"
           ALIAS="ricbrowser"
           PASS="ricbrowser-release"
@@ -50,17 +58,21 @@ jobs:
 
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
           test -x "$APKSIGNER"
+
           "$APKSIGNER" sign \
             --ks "$KEYSTORE" \
             --ks-key-alias "$ALIAS" \
             --ks-pass pass:"$PASS" \
             --key-pass pass:"$PASS" \
-            "$APK"
-          "$APKSIGNER" verify --verbose "$APK"
+            --out "$SIGNED_APK" \
+            "$UNSIGNED_APK"
+
+          "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK"
+          test -s "$SIGNED_APK"
 
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
           name: ric-browser-release-signed
-          path: app/build/outputs/apk/release/app-release.apk
+          path: app/build/outputs/apk/release/ric-browser-release-signed.apk
           if-no-files-found: error
