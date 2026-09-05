@@ -72,8 +72,8 @@ class UnblockManager(private val activity: Activity) {
             val p = dp(20)
             setPadding(p, dp(6), p, 0)
         }
-        val hint = TextView(activity).apply {
-            text = "Examples: proxy.example.com:8080, https://proxy.example.com:443, socks://127.0.0.1:9050"
+        val helperText = TextView(activity).apply {
+            this.text = "Examples: proxy.example.com:8080, https://proxy.example.com:443, socks://127.0.0.1:9050"
             textSize = 12f
         }
         val input = EditText(activity).apply {
@@ -83,7 +83,7 @@ class UnblockManager(private val activity: Activity) {
             setText(savedProxy())
             setSelection(text.length)
         }
-        box.addView(hint)
+        box.addView(helperText)
         box.addView(input)
 
         val dialog = AlertDialog.Builder(activity)
