@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tabButton: Button
     private lateinit var webContainer: FrameLayout
     private lateinit var extensionManager: ExtensionManager
+    private lateinit var unblockManager: UnblockManager
 
     private val tabs = mutableListOf<BrowserTab>()
     private var activeTabIndex = 0
@@ -76,6 +77,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         extensionManager = ExtensionManager(this)
+        unblockManager = UnblockManager(this)
         window.statusBarColor = SURFACE_COLOR
         window.navigationBarColor = SURFACE_COLOR
         buildUi()
@@ -89,8 +91,11 @@ class MainActivity : AppCompatActivity() {
         if (tabs.isEmpty()) tabs.add(BrowserTab(HOME_URL, "New tab"))
         activeTabIndex = activeTabIndex.coerceIn(0, tabs.lastIndex)
         updateTabButton()
-        openActiveTab()
-        mediaHandler.postDelayed(mediaScanner, MEDIA_SCAN_INTERVAL_MS)
+        unblockManager.applySaved {
+            if (isFinishing || isDestroyed) return@applySaved
+            openActiveTab()
+            mediaHandler.postDelayed(mediaScanner, MEDIA_SCAN_INTERVAL_MS)
+        }
     }
 
     private fun buildUi() {
@@ -158,13 +163,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun showBrowserMenu() {
         val enabledCount = extensionManager.list().count { it.enabled }
-        val items = arrayOf("New tab", "Reload", "Extensions ($enabledCount)", "Clear cache now")
+        val items = arrayOf("New tab", "Reload", "Extensions ($enabledCount)", "Unblock (${unblockManager.statusLabel()})", "Clear cache now")
         AlertDialog.Builder(this).setItems(items) { _, which ->
             when (which) {
                 0 -> if (tabs.size < MAX_TABS) newTab() else toast("Maximum $MAX_TABS tabs")
                 1 -> if (::webView.isInitialized && !webViewDestroyed) webView.reload()
                 2 -> showExtensions()
-                3 -> { clearBrowserCache(); toast("Cache cleared") }
+                3 -> unblockManager.showDialog { if (::webView.isInitialized && !webViewDestroyed) webView.reload() }
+                4 -> { clearBrowserCache(); toast("Cache cleared") }
             }
         }.show()
     }
