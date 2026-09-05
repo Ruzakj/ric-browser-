@@ -43,22 +43,21 @@ class UnblockManager(private val activity: Activity) {
     fun showDialog(onChanged: () -> Unit) {
         val enabled = prefs.getBoolean(KEY_ENABLED, false)
         val proxy = savedProxy()
-        val status = if (enabled && proxy.isNotBlank()) "Enabled\n$proxy" else "Disabled"
+        val status = if (enabled && proxy.isNotBlank()) "ON · $proxy" else "OFF"
         val options = arrayOf(
-            "Turn off",
             "Set / change proxy",
+            "Turn off",
             "Android Private DNS settings"
         )
         AlertDialog.Builder(activity)
-            .setTitle("Unblock mode")
-            .setMessage("Current: $status\n\nRic Browser can route WebView traffic through an HTTP, HTTPS, or SOCKS proxy. This can reach pages blocked by DNS/ISP filtering when the proxy itself is reachable.")
+            .setTitle("Unblock mode · $status")
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> {
+                    0 -> showProxyEditor(onChanged)
+                    1 -> {
                         prefs.edit().putBoolean(KEY_ENABLED, false).apply()
                         applySaved { toast("Unblock mode off"); onChanged() }
                     }
-                    1 -> showProxyEditor(onChanged)
                     2 -> openPrivateDnsSettings()
                 }
             }
@@ -73,7 +72,7 @@ class UnblockManager(private val activity: Activity) {
             setPadding(p, dp(6), p, 0)
         }
         val helperText = TextView(activity).apply {
-            this.text = "Examples: proxy.example.com:8080, https://proxy.example.com:443, socks://127.0.0.1:9050"
+            this.text = "Route WebView traffic through HTTP, HTTPS, or SOCKS. Examples: proxy.example.com:8080, https://proxy.example.com:443, socks://127.0.0.1:9050"
             textSize = 12f
         }
         val input = EditText(activity).apply {
