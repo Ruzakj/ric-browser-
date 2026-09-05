@@ -11,8 +11,8 @@ android {
         applicationId 'com.ruzakj.ricbrowser'
         minSdk 23
         targetSdk 35
-        versionCode 10
-        versionName '0.5.2'
+        versionCode 11
+        versionName '0.5.3'
     }
 
     compileOptions {
@@ -35,4 +35,5 @@ android {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.15.0'
 }
