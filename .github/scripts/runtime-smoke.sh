@@ -133,6 +133,18 @@ adb shell run-as "$PACKAGE" cat shared_prefs/ric_extensions.xml | grep -q 'ric.s
 adb shell input keyevent KEYCODE_BACK
 sleep 1
 
+echo '=== UNBLOCK MODE UI ==='
+tap_toolbar_exact '⋮'
+sleep 1
+assert_ui_text 'Unblock ('
+tap_ui_text 'Unblock ('
+sleep 1
+assert_ui_text 'Unblock mode'
+assert_ui_text 'Set / change proxy'
+assert_ui_text 'Android Private DNS settings'
+adb shell input keyevent KEYCODE_BACK
+sleep 1
+
 echo '=== MULTI-TAB CREATE FROM MENU ==='
 tap_toolbar_exact '⋮'
 sleep 1
@@ -175,4 +187,5 @@ echo 'ROTATION_SURVIVAL=PASS'
 echo 'COMPACT_TAB_MANAGER=PASS'
 echo 'EXTENSIONS_MANAGER_UI=PASS'
 echo 'BUILTIN_SHORTLINK_HELPER=PASS'
+echo 'UNBLOCK_MODE_UI=PASS'
 echo 'MULTI_TAB_PERSISTENCE=PASS'
