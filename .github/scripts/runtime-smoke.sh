@@ -94,11 +94,25 @@ adb logcat -c
 adb shell am start -W -n "$ACTIVITY" | tee /tmp/start1.txt
 grep -q 'Status: ok' /tmp/start1.txt
 sleep 8
-test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+PID1="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+test -n "$PID1"
 
 echo '=== LOGCAT #1 ==='
 adb logcat -d -v threadtime > /tmp/logcat1.txt
 fail_on_runtime_blocker /tmp/logcat1.txt
+
+echo '=== ROTATION SURVIVAL ==='
+adb shell settings put system accelerometer_rotation 0
+adb shell settings put system user_rotation 1
+sleep 3
+PID2="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+test -n "$PID2"
+test "$PID1" = "$PID2"
+dump_ui
+grep -q 'Ric Browser\|google.com\|accounts.google.com' /tmp/ric-window.xml
+adb shell settings put system user_rotation 0
+sleep 2
+test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 
 echo '=== COMPACT TAB MANAGER ==='
 tap_toolbar_exact '□1'
@@ -157,6 +171,7 @@ adb logcat -d -v threadtime > /tmp/logcat2.txt
 fail_on_runtime_blocker /tmp/logcat2.txt
 
 echo 'RUNTIME_SMOKE_TEST=PASS'
+echo 'ROTATION_SURVIVAL=PASS'
 echo 'COMPACT_TAB_MANAGER=PASS'
 echo 'EXTENSIONS_MANAGER_UI=PASS'
 echo 'BUILTIN_SHORTLINK_HELPER=PASS'
