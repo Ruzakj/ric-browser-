@@ -26,7 +26,6 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -35,7 +34,6 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -63,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingDownload: MediaItem? = null
 
     @Volatile private var currentPageUrl: String? = null
+    @Volatile private var mediaPageUrl: String? = null
 
     private val mediaLock = Any()
     private val mediaItems = LinkedHashMap<String, MediaItem>()
@@ -282,7 +281,9 @@ class MainActivity : AppCompatActivity() {
         if (activeTabIndex !in tabs.indices) return
         destroyCurrentWebView(false); clearDetectedMedia()
         val tab = tabs[activeTabIndex]
-        currentPageUrl = tab.url; address.setText(displayAddress(tab.url))
+        currentPageUrl = tab.url
+        mediaPageUrl = tab.url
+        address.setText(displayAddress(tab.url))
         webView = WebView(this); webViewDestroyed = false
         webView.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         CookieManager.getInstance().apply { setAcceptCookie(true); setAcceptThirdPartyCookies(webView, true) }
@@ -290,6 +291,7 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true; domStorageEnabled = true; mediaPlaybackRequiresUserGesture = true
             builtInZoomControls = false; displayZoomControls = false; cacheMode = WebSettings.LOAD_DEFAULT
             loadsImagesAutomatically = true; javaScriptCanOpenWindowsAutomatically = false; setSupportMultipleWindows(false)
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             userAgentString = userAgentString.replace("; wv", "")
         }
         webView.webChromeClient = object : WebChromeClient() {
@@ -306,17 +308,18 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url; val scheme = uri.scheme?.lowercase(Locale.ROOT).orEmpty()
-                if (scheme == "http" || scheme == "https") return runCatching { AdBlocker.shouldBlock(uri.toString(), currentPageUrl) }.getOrDefault(false)
+                if (scheme == "http" || scheme == "https") return false
                 return openExternal(uri)
             }
-            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                val requestUrl = request.url.toString(); tryRecordMedia(requestUrl)
-                return if (runCatching { AdBlocker.shouldBlock(requestUrl, currentPageUrl) }.getOrDefault(false)) AdBlocker.emptyResponse() else super.shouldInterceptRequest(view, request)
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) = super.shouldInterceptRequest(view, request).also {
+                val requestUrl = request.url.toString()
+                val referer = request.requestHeaders.entries.firstOrNull { it.key.equals("Referer", true) }?.value
+                if (isMediaRequestForCurrentPage(referer)) tryRecordMedia(requestUrl)
             }
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 if (view !== webView || activeTabIndex !in tabs.indices) return
-                currentPageUrl = url; tabs[activeTabIndex].url = url
+                currentPageUrl = url; mediaPageUrl = url; tabs[activeTabIndex].url = url
                 if (!address.hasFocus()) address.setText(displayAddress(url))
                 clearDetectedMedia(); saveTabs()
                 if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
@@ -325,7 +328,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
                 if (view !== webView || activeTabIndex !in tabs.indices) return
-                currentPageUrl = url; tabs[activeTabIndex].url = url
+                currentPageUrl = url; mediaPageUrl = url; tabs[activeTabIndex].url = url
                 if (!address.hasFocus()) address.setText(displayAddress(url))
                 saveTabs(); view.evaluateJavascript(COSMETIC_AD_GUARD, null)
                 if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
@@ -344,6 +347,8 @@ class MainActivity : AppCompatActivity() {
     private fun loadInActiveTab(input: String) {
         val value = input.trim(); if (value.isEmpty() || webViewDestroyed) return
         val url = when { value.startsWith("http://", true) || value.startsWith("https://", true) -> value; value.contains(".") && !value.contains(" ") -> "https://$value"; else -> "https://www.google.com/search?q=" + Uri.encode(value) }
+        clearDetectedMedia()
+        mediaPageUrl = url
         currentPageUrl = url; tabs.getOrNull(activeTabIndex)?.url = url; saveTabs(); webView.loadUrl(url)
     }
 
@@ -373,13 +378,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun clearDetectedMedia() { synchronized(mediaLock) { mediaItems.clear() }; updateMediaButton() }
     private fun updateMediaButton() = runOnUiThread {
-        val count = synchronized(mediaLock) { mediaItems.size }; mediaButton.text = if (count > 0) "↓$count" else "↓"; mediaButton.isEnabled = count > 0; mediaButton.visibility = if (count > 0) View.VISIBLE else View.GONE
+        val count = synchronized(mediaLock) { mediaItems.size }
+        mediaButton.text = if (count > 0) "↓$count" else "↓"
+        mediaButton.isEnabled = count > 0
+        mediaButton.visibility = if (count > 0) View.VISIBLE else View.GONE
+    }
+
+    private fun sameSite(a: String?, b: String?): Boolean {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+        return runCatching {
+            val ah = Uri.parse(a).host?.lowercase(Locale.ROOT)?.removePrefix("www.")
+            val bh = Uri.parse(b).host?.lowercase(Locale.ROOT)?.removePrefix("www.")
+            !ah.isNullOrBlank() && !bh.isNullOrBlank() && ah == bh
+        }.getOrDefault(false)
+    }
+
+    private fun isMediaRequestForCurrentPage(referer: String?): Boolean {
+        val page = mediaPageUrl ?: currentPageUrl ?: return false
+        if (referer.isNullOrBlank()) return true
+        return sameSite(referer, page)
     }
 
     private fun tryRecordMedia(raw: String?) {
         val url = raw?.trim().orEmpty(); if (url.isEmpty() || url.startsWith("blob:", true) || url.startsWith("data:", true)) return
         if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) return
-        if (runCatching { AdBlocker.shouldBlock(url, currentPageUrl) }.getOrDefault(false)) return
         val item = classifyMedia(url) ?: return
         val added = synchronized(mediaLock) {
             if (mediaItems.containsKey(item.url)) false else { if (mediaItems.size >= MAX_MEDIA_ITEMS) mediaItems.remove(mediaItems.keys.firstOrNull()); mediaItems[item.url] = item; true }
@@ -404,10 +426,21 @@ class MainActivity : AppCompatActivity() {
     private fun videoMime(ext: String) = when (ext) { "mp4", "m4v" -> "video/mp4"; "webm" -> "video/webm"; "mkv" -> "video/x-matroska"; "mov" -> "video/quicktime"; "3gp" -> "video/3gpp"; else -> "video/*" }
     private fun audioMime(ext: String) = when (ext) { "mp3" -> "audio/mpeg"; "m4a", "mp4a" -> "audio/mp4"; "aac" -> "audio/aac"; "ogg", "oga" -> "audio/ogg"; "opus" -> "audio/opus"; "wav" -> "audio/wav"; "flac" -> "audio/flac"; else -> "audio/*" }
 
-    private fun scanDomMedia() { if (!webViewDestroyed && ::webView.isInitialized) webView.evaluateJavascript(MEDIA_SCAN_SCRIPT) { parseMediaScanResult(it) } }
-    private fun parseMediaScanResult(result: String?) {
+    private fun scanDomMedia() {
+        if (webViewDestroyed || !::webView.isInitialized) return
+        val scanPage = mediaPageUrl ?: currentPageUrl ?: return
+        webView.evaluateJavascript(MEDIA_SCAN_SCRIPT) { result -> parseMediaScanResult(result, scanPage) }
+    }
+
+    private fun parseMediaScanResult(result: String?, scanPage: String) {
         if (result.isNullOrBlank() || result == "null") return
-        runCatching { val decoded = JSONTokener(result).nextValue(); val text = if (decoded is String) decoded else decoded.toString(); val array = JSONArray(text); for (i in 0 until array.length()) tryRecordMedia(array.optString(i)) }
+        if (!sameSite(scanPage, mediaPageUrl ?: currentPageUrl)) return
+        runCatching {
+            val decoded = JSONTokener(result).nextValue()
+            val text = if (decoded is String) decoded else decoded.toString()
+            val array = JSONArray(text)
+            for (i in 0 until array.length()) tryRecordMedia(array.optString(i))
+        }
     }
 
     private fun showMediaList() {
