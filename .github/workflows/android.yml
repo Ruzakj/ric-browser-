@@ -2,7 +2,7 @@ name: Android Build & Runtime QA
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, ric-power-c112167 ]
   workflow_dispatch:
 
 permissions:
