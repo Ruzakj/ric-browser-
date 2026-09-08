@@ -28,6 +28,9 @@ jobs:
         with:
           gradle-version: '8.10'
 
+      - name: Hard-route persistent media External to MX Player
+        run: python3 .github/scripts/patch-power-media-mx.py
+
       - name: Clean, test and build debug/release
         run: |
           set -euo pipefail
