@@ -13,7 +13,6 @@ class RicBrowserApp : Application() {
             override fun onActivityResumed(activity: Activity) {
                 activity.window.decorView.post {
                     PowerTools.attach(activity)
-                    MediaDirectPatch.attach(activity)
                 }
             }
             override fun onActivityPaused(activity: Activity) = Unit
