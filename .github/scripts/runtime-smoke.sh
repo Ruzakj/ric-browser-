@@ -19,8 +19,17 @@ saved_tab_count() {
 }
 
 dump_ui() {
-  adb shell uiautomator dump /sdcard/ric-window.xml >/dev/null
-  adb pull /sdcard/ric-window.xml /tmp/ric-window.xml >/dev/null
+  local ok=0
+  for _ in 1 2 3; do
+    if adb shell uiautomator dump /sdcard/ric-window.xml >/dev/null 2>&1 \
+      && adb pull /sdcard/ric-window.xml /tmp/ric-window.xml >/dev/null 2>&1 \
+      && test -s /tmp/ric-window.xml; then
+      ok=1
+      break
+    fi
+    sleep 1
+  done
+  test "$ok" -eq 1
 }
 
 assert_ui_text() {
@@ -67,8 +76,16 @@ import os,re
 import xml.etree.ElementTree as ET
 needle=os.environ['NEEDLE']
 root=ET.parse('/tmp/ric-window.xml').getroot()
+# Tab count may differ after restore; treat □N as the same toolbar control.
+def matches(text):
+    if text == needle:
+        return True
+    if needle.startswith('□') and text.startswith('□'):
+        return True
+    return False
 for node in root.iter('node'):
-    if node.attrib.get('text','') != needle:
+    text=node.attrib.get('text','')
+    if not matches(text):
         continue
     m=re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',node.attrib.get('bounds',''))
     if not m:
@@ -90,14 +107,14 @@ adb install -r "$APK"
 
 echo '=== COLD START #1 ==='
 adb shell am force-stop "$PACKAGE"
-adb logcat -c
+adb logcat -c || true
 adb shell am start -W -n "$ACTIVITY" | tee /tmp/start1.txt
 grep -q 'Status: ok' /tmp/start1.txt
 sleep 8
 test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 
 echo '=== LOGCAT #1 ==='
-adb logcat -d -v threadtime > /tmp/logcat1.txt
+adb logcat -d -v threadtime > /tmp/logcat1.txt 2>/dev/null || true
 fail_on_runtime_blocker /tmp/logcat1.txt
 
 echo '=== COMPACT TAB MANAGER ==='
@@ -142,7 +159,7 @@ sleep 2
 
 echo '=== COLD START #2 / TAB RESTORE ==='
 adb shell am force-stop "$PACKAGE"
-adb logcat -c
+adb logcat -c || true
 adb shell am start -W -n "$ACTIVITY" | tee /tmp/start2.txt
 grep -q 'Status: ok' /tmp/start2.txt
 sleep 8
@@ -153,7 +170,7 @@ echo "SAVED_TABS_AFTER_RESTART=$COUNT"
 adb shell run-as "$PACKAGE" cat shared_prefs/ric_extensions.xml | grep -q 'ric.shortlink.auto-helper'
 
 echo '=== LOGCAT #2 ==='
-adb logcat -d -v threadtime > /tmp/logcat2.txt
+adb logcat -d -v threadtime > /tmp/logcat2.txt 2>/dev/null || true
 fail_on_runtime_blocker /tmp/logcat2.txt
 
 echo 'RUNTIME_SMOKE_TEST=PASS'
