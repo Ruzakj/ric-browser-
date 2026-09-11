@@ -26,6 +26,7 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -45,6 +46,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.util.Locale
+import java.io.ByteArrayInputStream
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -317,10 +319,14 @@ class MainActivity : AppCompatActivity() {
                 if (scheme == "http" || scheme == "https") return false
                 return openExternal(uri)
             }
-            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) = super.shouldInterceptRequest(view, request).also {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val requestUrl = request.url.toString()
                 val referer = request.requestHeaders.entries.firstOrNull { it.key.equals("Referer", true) }?.value
+                if (isAdRequest(requestUrl)) {
+                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                }
                 if (isMediaRequestForCurrentPage(referer)) tryRecordMedia(requestUrl)
+                return super.shouldInterceptRequest(view, request)
             }
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
@@ -328,6 +334,7 @@ class MainActivity : AppCompatActivity() {
                 currentPageUrl = url; mediaPageUrl = url; tabs[activeTabIndex].url = url
                 if (!address.hasFocus()) address.setText(displayAddress(url))
                 clearDetectedMedia(); saveTabs()
+                view.evaluateJavascript(COSMETIC_AD_GUARD, null)
                 if (isYouTube(url)) view.evaluateJavascript(YOUTUBE_GUARD, null)
                 injectExtensions(view, url, "start")
             }
@@ -405,6 +412,23 @@ class MainActivity : AppCompatActivity() {
         return sameSite(referer, page)
     }
 
+    private fun isAdRequest(raw: String): Boolean {
+        val lower = raw.lowercase(Locale.ROOT)
+        val host = runCatching { Uri.parse(raw).host?.lowercase(Locale.ROOT).orEmpty() }.getOrDefault("")
+        if (host.isBlank()) return false
+        val blockedHosts = listOf(
+            "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
+            "adnxs.com", "taboola.com", "outbrain.com", "criteo.com", "popads.net", "popcash.net",
+            "propellerads.com", "adsterra.com", "exoclick.com", "onclicka.com", "onclickalgo.com",
+            "hilltopads.net", "juicyads.com", "trafficjunky.net", "mgid.com", "revcontent.com"
+        )
+        if (blockedHosts.any { host == it || host.endsWith(".$it") }) return true
+        return listOf(
+            "/ads/", "/adserver/", "/adservice/", "/banner-ad", "/popunder", "/popup-ad",
+            "?ad=", "&ad=", "adclick", "adsystem", "advertising"
+        ).any { lower.contains(it) }
+    }
+
     private fun tryRecordMedia(raw: String?) {
         val url = raw?.trim().orEmpty(); if (url.isEmpty() || url.startsWith("blob:", true) || url.startsWith("data:", true)) return
         if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) return
@@ -461,11 +485,20 @@ class MainActivity : AppCompatActivity() {
         }.setNegativeButton("Cancel", null).show()
     }
 
-    private fun playMedia(item: MediaItem, preferMx: Boolean) {
-        val base = Intent(Intent.ACTION_VIEW).apply { setDataAndType(Uri.parse(item.url), item.mime); putExtra("title", URLUtil.guessFileName(item.url, null, item.mime)); currentPageUrl?.let { putExtra("referer", it) } }
-        if (preferMx) {
-            for (pkg in MX_PLAYER_PACKAGES) try { startActivity(Intent(base).setPackage(pkg)); return } catch (_: ActivityNotFoundException) {}
-            toast("RIC Player not installed")
+    private fun playMedia(item: MediaItem, preferRicPlayer: Boolean) {
+        val base = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Uri.parse(item.url), item.mime)
+            putExtra("title", URLUtil.guessFileName(item.url, null, item.mime))
+            currentPageUrl?.let { putExtra("referer", it) }
+        }
+        if (preferRicPlayer) {
+            try {
+                startActivity(Intent(base).setClassName(RIC_PLAYER_PACKAGE, RIC_PLAYER_ACTIVITY))
+                return
+            } catch (_: ActivityNotFoundException) {
+                toast("RIC Player belum terpasang")
+                return
+            }
         }
         try { startActivity(Intent.createChooser(base, "Play media with")) } catch (_: ActivityNotFoundException) { toast("No compatible player found") }
     }
@@ -536,7 +569,8 @@ class MainActivity : AppCompatActivity() {
         private const val MEDIA_SCAN_INTERVAL_MS = 2500L
         private const val STORAGE_PERMISSION_REQUEST = 3021
         private const val EXTENSION_IMPORT_REQUEST = 4812
-        private val MX_PLAYER_PACKAGES = arrayOf("com.ric.player")
+        private const val RIC_PLAYER_PACKAGE = "com.ric.player"
+        private const val RIC_PLAYER_ACTIVITY = "com.ric.player.PlayerActivity"
         private val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "webm", "mkv", "mov", "3gp")
         private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "mp4a", "aac", "ogg", "oga", "opus", "wav", "flac")
         private val SURFACE_COLOR = Color.rgb(250, 250, 250)
@@ -550,7 +584,41 @@ class MainActivity : AppCompatActivity() {
 (() => { const out=new Set(); const add=v=>{if(!v||typeof v!=='string')return;try{v=new URL(v,location.href).href}catch(_){return}if(/^https?:/i.test(v))out.add(v)}; document.querySelectorAll('video,audio,source').forEach(el=>{add(el.currentSrc);add(el.src);add(el.getAttribute&&el.getAttribute('src'))}); try{performance.getEntriesByType('resource').forEach(r=>{if(/\.(mp4|m4v|webm|mkv|mov|3gp|mp3|m4a|aac|ogg|oga|opus|wav|flac|m3u8|mpd)(?:[?#]|$)/i.test(r.name)||/googlevideo\.com\/videoplayback/i.test(r.name))add(r.name)})}catch(_){} return JSON.stringify(Array.from(out)); })()
 """
         private const val COSMETIC_AD_GUARD = """
-(() => { if(window.__ricCosmeticGuard)return; window.__ricCosmeticGuard=true; const selectors=['.adsbygoogle','[id^="google_ads_"]','[data-ad-client]','[data-ad-slot]','iframe[src*="doubleclick.net"]','iframe[src*="googlesyndication.com"]','iframe[src*="googleadservices.com"]','iframe[src*="taboola.com"]','iframe[src*="outbrain.com"]','iframe[src*="adnxs.com"]','iframe[src*="criteo.com"]']; const clean=()=>{try{document.querySelectorAll(selectors.join(',')).forEach(el=>el.remove())}catch(_){}}; clean(); new MutationObserver(clean).observe(document.documentElement,{childList:true,subtree:true}); })()
+(() => {
+  if (window.__ricCosmeticGuard) { try { window.__ricCosmeticClean && window.__ricCosmeticClean(); } catch(_){} return; }
+  window.__ricCosmeticGuard = true;
+  const selectors = [
+    '.adsbygoogle','[id^="google_ads_"]','[id*="google_ads"]','[class*="adsbygoogle"]',
+    '[data-ad-client]','[data-ad-slot]','[class*="ad-banner"]','[class*="ad_banner"]','[class*="banner-ad"]',
+    '[id*="ad-banner"]','[id*="ad_banner"]','[class*="popup-ad"]','[class*="popunder"]',
+    'iframe[src*="doubleclick.net"]','iframe[src*="googlesyndication.com"]','iframe[src*="googleadservices.com"]',
+    'iframe[src*="taboola.com"]','iframe[src*="outbrain.com"]','iframe[src*="adnxs.com"]','iframe[src*="criteo.com"]',
+    'iframe[src*="adsterra"]','iframe[src*="propellerads"]','iframe[src*="popads"]','iframe[src*="exoclick"]'
+  ];
+  const gambling = /(slot|gacor|judi|casino|togel|bet88|bet365|scatter|rtp\s*\d|spin\s*(?:gratis|santai|sekarang)|depo\s*(?:receh|murah)|maxwin)/i;
+  const removeAdLike = el => {
+    if (!el || !el.parentNode) return;
+    const box = el.closest && el.closest('aside,ins,figure,section,div,a');
+    const target = box || el;
+    const text = ((target.innerText || '') + ' ' + (target.getAttribute && (target.getAttribute('href') || '')) + ' ' + (el.getAttribute && (el.getAttribute('src') || el.getAttribute('alt') || ''))).slice(0,1200);
+    if (gambling.test(text)) target.remove();
+  };
+  const clean = () => {
+    try { document.querySelectorAll(selectors.join(',')).forEach(el => el.remove()); } catch(_) {}
+    try { document.querySelectorAll('a[href],img[src],iframe[src]').forEach(removeAdLike); } catch(_) {}
+    try {
+      document.querySelectorAll('[style*="position: fixed"],[style*="position:fixed"],[style*="position: sticky"],[style*="position:sticky"]').forEach(el => {
+        const r = el.getBoundingClientRect();
+        const text = ((el.innerText || '') + ' ' + (el.getAttribute('class') || '') + ' ' + (el.getAttribute('id') || '')).slice(0,600);
+        if ((r.width > innerWidth * .65 && r.height > 70) && (gambling.test(text) || /ad|banner|popup|promo/i.test(text))) el.remove();
+      });
+    } catch(_) {}
+  };
+  window.__ricCosmeticClean = clean;
+  clean();
+  new MutationObserver(clean).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['src','href','style','class']});
+  setInterval(clean,1200);
+})()
 """
         private const val YOUTUBE_GUARD = """
 (() => { if(window.__ricYtGuard)return; window.__ricYtGuard=true; const skip=()=>{try{document.querySelectorAll('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-ad-skip-button-slot,.ytp-ad-overlay-close-button').forEach(e=>e.click());document.querySelectorAll('ytd-display-ad-renderer,ytd-promoted-sparkles-web-renderer,ytd-in-feed-ad-layout-renderer,ytd-action-companion-ad-renderer').forEach(e=>e.remove())}catch(_){}}; new MutationObserver(skip).observe(document.documentElement,{subtree:true,childList:true}); setInterval(skip,500); skip(); })()
