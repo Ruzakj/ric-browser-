@@ -1,0 +1,36 @@
+name: Patch direct player to RIC Player
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-ric-player.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Replace MX Player direct target with RIC Player
+        run: |
+          FILE='app/src/main/java/com/ruzakj/ricbrowser/MainActivity.kt'
+          sed -i 's/Play MX Player/Play RIC Player/g' "$FILE"
+          sed -i 's/MX Player not installed/RIC Player not installed/g' "$FILE"
+          sed -i 's/arrayOf("com.mxtech.videoplayer.ad", "com.mxtech.videoplayer.pro")/arrayOf("com.ric.player")/g' "$FILE"
+          grep -nE 'Play RIC Player|RIC Player not installed|com\.ric\.player' "$FILE"
+      - name: Commit patch
+        run: |
+          if git diff --quiet; then
+            echo 'No changes needed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/ruzakj/ricbrowser/MainActivity.kt
+          git commit -m 'Switch direct media playback to RIC Player'
+          git push
