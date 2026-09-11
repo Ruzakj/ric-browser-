@@ -31,5 +31,5 @@ jobs:
             echo "No source changes needed"
             exit 0
           fi
-          git commit -m "Fix aggressive ad blocking and force RIC Player routing"
+          git commit -m "Block bm-88 ads and redirects"
           git push origin main
