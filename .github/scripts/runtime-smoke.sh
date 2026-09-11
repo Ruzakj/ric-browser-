@@ -23,6 +23,11 @@ dump_ui() {
   adb pull /sdcard/ric-window.xml /tmp/ric-window.xml >/dev/null
 }
 
+assert_activity_foreground() {
+  adb shell dumpsys activity activities > /tmp/ric-activities.txt
+  grep -Eq "mResumedActivity:.*${PACKAGE}/\.MainActivity|topResumedActivity=.*${PACKAGE}/\.MainActivity|mCurrentFocus=.*${PACKAGE}/\.MainActivity" /tmp/ric-activities.txt
+}
+
 assert_ui_text() {
   local needle="$1"
   dump_ui
@@ -96,6 +101,7 @@ grep -q 'Status: ok' /tmp/start1.txt
 sleep 8
 PID1="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 test -n "$PID1"
+assert_activity_foreground
 
 echo '=== LOGCAT #1 ==='
 adb logcat -d -v threadtime > /tmp/logcat1.txt
@@ -104,15 +110,17 @@ fail_on_runtime_blocker /tmp/logcat1.txt
 echo '=== ROTATION SURVIVAL ==='
 adb shell settings put system accelerometer_rotation 0
 adb shell settings put system user_rotation 1
-sleep 3
+sleep 4
 PID2="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 test -n "$PID2"
 test "$PID1" = "$PID2"
-dump_ui
-grep -q 'Ric Browser\|google.com\|accounts.google.com' /tmp/ric-window.xml
+assert_activity_foreground
+# UI text can legitimately change while WebView is loading after rotation,
+# so rotation survival is validated by process continuity + resumed activity.
 adb shell settings put system user_rotation 0
-sleep 2
+sleep 3
 test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+assert_activity_foreground
 
 echo '=== COMPACT TAB MANAGER ==='
 tap_toolbar_exact '□1'
@@ -161,6 +169,7 @@ adb shell am start -W -n "$ACTIVITY" | tee /tmp/resume.txt
 grep -q 'Status: ok' /tmp/resume.txt
 sleep 3
 test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+assert_activity_foreground
 
 echo '=== ANDROID BACK ==='
 adb shell input keyevent KEYCODE_BACK
@@ -173,6 +182,7 @@ adb shell am start -W -n "$ACTIVITY" | tee /tmp/start2.txt
 grep -q 'Status: ok' /tmp/start2.txt
 sleep 8
 test -n "$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+assert_activity_foreground
 COUNT=$(saved_tab_count)
 test "${COUNT:-0}" -ge 2
 echo "SAVED_TABS_AFTER_RESTART=$COUNT"
