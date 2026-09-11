@@ -366,6 +366,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadInActiveTab(input: String) {
         val value = input.trim(); if (value.isEmpty() || webViewDestroyed) return
         val url = when { value.startsWith("http://", true) || value.startsWith("https://", true) -> value; value.contains(".") && !value.contains(" ") -> "https://$value"; else -> "https://www.google.com/search?q=" + Uri.encode(value) }
+        if (isAdRequest(url)) { toast("Ad blocked"); return }
         clearDetectedMedia()
         mediaPageUrl = url
         currentPageUrl = url; tabs.getOrNull(activeTabIndex)?.url = url; saveTabs(); webView.loadUrl(url)
@@ -426,7 +427,7 @@ class MainActivity : AppCompatActivity() {
             "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
             "adnxs.com", "taboola.com", "outbrain.com", "criteo.com", "popads.net", "popcash.net",
             "propellerads.com", "adsterra.com", "exoclick.com", "onclicka.com", "onclickalgo.com",
-            "hilltopads.net", "juicyads.com", "trafficjunky.net", "mgid.com", "revcontent.com"
+            "hilltopads.net", "juicyads.com", "trafficjunky.net", "mgid.com", "revcontent.com", "bm-88.net"
         )
         if (blockedHosts.any { host == it || host.endsWith(".$it") }) return true
         return listOf(
