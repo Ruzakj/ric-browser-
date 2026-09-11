@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/scripts/fix_browser_ads_player.py'
+      - '.github/scripts/block_bm88.py'
       - '.github/workflows/fix-ads-ric-player.yml'
   workflow_dispatch:
 
@@ -19,7 +20,9 @@ jobs:
           ref: main
 
       - name: Apply browser patch
-        run: python3 .github/scripts/fix_browser_ads_player.py
+        run: |
+          python3 .github/scripts/fix_browser_ads_player.py
+          python3 .github/scripts/block_bm88.py
 
       - name: Commit source update
         run: |
