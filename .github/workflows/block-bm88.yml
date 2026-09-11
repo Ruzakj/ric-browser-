@@ -1,0 +1,81 @@
+name: Block bm-88 ads
+
+on:
+  push:
+    paths:
+      - '.github/workflows/block-bm88.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch Ric Browser ad blocking
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/ruzakj/ricbrowser/MainActivity.kt')
+          s = p.read_text()
+
+          old = '''            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val uri = request.url; val scheme = uri.scheme?.lowercase(Locale.ROOT).orEmpty()
+                if (scheme == "http" || scheme == "https") return false
+                return openExternal(uri)
+            }'''
+          new = '''            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val uri = request.url; val scheme = uri.scheme?.lowercase(Locale.ROOT).orEmpty()
+                if (scheme == "http" || scheme == "https") {
+                    if (isAdRequest(uri.toString())) {
+                        runOnUiThread { toast("Ad blocked") }
+                        return true
+                    }
+                    return false
+                }
+                return openExternal(uri)
+            }'''
+          if old not in s:
+              raise SystemExit('shouldOverrideUrlLoading pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = '''            "hilltopads.net", "juicyads.com", "trafficjunky.net", "mgid.com", "revcontent.com"
+        )'''
+          new = '''            "hilltopads.net", "juicyads.com", "trafficjunky.net", "mgid.com", "revcontent.com",
+            "bm-88.net"
+        )'''
+          if old not in s:
+              raise SystemExit('blockedHosts pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    'iframe[src*="adsterra"]','iframe[src*="propellerads"]','iframe[src*="popads"]','iframe[src*="exoclick"]'
+  ];'''
+          new = '''    'iframe[src*="adsterra"]','iframe[src*="propellerads"]','iframe[src*="popads"]','iframe[src*="exoclick"]',
+    'a[href*="bm-88.net"]','iframe[src*="bm-88.net"]','img[src*="bm-88.net"]'
+  ];'''
+          if old not in s:
+              raise SystemExit('cosmetic selectors pattern not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    const text = ((target.innerText || '') + ' ' + (target.getAttribute && (target.getAttribute('href') || '')) + ' ' + (el.getAttribute && (el.getAttribute('src') || el.getAttribute('alt') || ''))).slice(0,1200);
+    if (gambling.test(text)) target.remove();'''
+          new = '''    const text = ((target.innerText || '') + ' ' + (target.getAttribute && (target.getAttribute('href') || '')) + ' ' + (el.getAttribute && (el.getAttribute('src') || el.getAttribute('alt') || ''))).slice(0,1200);
+    if (/bm-88\\.net/i.test(text) || gambling.test(text)) target.remove();'''
+          if old not in s:
+              raise SystemExit('removeAdLike pattern not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ruzakj/ricbrowser/MainActivity.kt
+          git diff --cached --quiet && exit 0
+          git commit -m "Block bm-88 ads and navigation"
+          git push
