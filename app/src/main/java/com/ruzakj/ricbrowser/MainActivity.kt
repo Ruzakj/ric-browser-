@@ -456,7 +456,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showMediaActions(item: MediaItem) {
-        AlertDialog.Builder(this).setTitle(URLUtil.guessFileName(item.url, null, item.mime)).setItems(arrayOf("Play MX Player", "Play external", "Download", "Copy link")) { _, which ->
+        AlertDialog.Builder(this).setTitle(URLUtil.guessFileName(item.url, null, item.mime)).setItems(arrayOf("Play RIC Player", "Play external", "Download", "Copy link")) { _, which ->
             when (which) { 0 -> playMedia(item, true); 1 -> playMedia(item, false); 2 -> requestDownload(item); 3 -> copyMediaLink(item.url) }
         }.setNegativeButton("Cancel", null).show()
     }
@@ -465,7 +465,7 @@ class MainActivity : AppCompatActivity() {
         val base = Intent(Intent.ACTION_VIEW).apply { setDataAndType(Uri.parse(item.url), item.mime); putExtra("title", URLUtil.guessFileName(item.url, null, item.mime)); currentPageUrl?.let { putExtra("referer", it) } }
         if (preferMx) {
             for (pkg in MX_PLAYER_PACKAGES) try { startActivity(Intent(base).setPackage(pkg)); return } catch (_: ActivityNotFoundException) {}
-            toast("MX Player not installed")
+            toast("RIC Player not installed")
         }
         try { startActivity(Intent.createChooser(base, "Play media with")) } catch (_: ActivityNotFoundException) { toast("No compatible player found") }
     }
@@ -536,7 +536,7 @@ class MainActivity : AppCompatActivity() {
         private const val MEDIA_SCAN_INTERVAL_MS = 2500L
         private const val STORAGE_PERMISSION_REQUEST = 3021
         private const val EXTENSION_IMPORT_REQUEST = 4812
-        private val MX_PLAYER_PACKAGES = arrayOf("com.mxtech.videoplayer.ad", "com.mxtech.videoplayer.pro")
+        private val MX_PLAYER_PACKAGES = arrayOf("com.ric.player")
         private val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "webm", "mkv", "mov", "3gp")
         private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "mp4a", "aac", "ogg", "oga", "opus", "wav", "flac")
         private val SURFACE_COLOR = Color.rgb(250, 250, 250)
