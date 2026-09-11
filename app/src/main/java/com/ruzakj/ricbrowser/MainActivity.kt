@@ -316,7 +316,13 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url; val scheme = uri.scheme?.lowercase(Locale.ROOT).orEmpty()
-                if (scheme == "http" || scheme == "https") return false
+                if (scheme == "http" || scheme == "https") {
+                    if (isAdRequest(uri.toString())) {
+                        runOnUiThread { toast("Ad blocked") }
+                        return true
+                    }
+                    return false
+                }
                 return openExternal(uri)
             }
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -593,7 +599,8 @@ class MainActivity : AppCompatActivity() {
     '[id*="ad-banner"]','[id*="ad_banner"]','[class*="popup-ad"]','[class*="popunder"]',
     'iframe[src*="doubleclick.net"]','iframe[src*="googlesyndication.com"]','iframe[src*="googleadservices.com"]',
     'iframe[src*="taboola.com"]','iframe[src*="outbrain.com"]','iframe[src*="adnxs.com"]','iframe[src*="criteo.com"]',
-    'iframe[src*="adsterra"]','iframe[src*="propellerads"]','iframe[src*="popads"]','iframe[src*="exoclick"]'
+    'iframe[src*="adsterra"]','iframe[src*="propellerads"]','iframe[src*="popads"]','iframe[src*="exoclick"]',
+    'a[href*="bm-88.net"]','iframe[src*="bm-88.net"]','img[src*="bm-88.net"]'
   ];
   const gambling = /(slot|gacor|judi|casino|togel|bet88|bet365|scatter|rtp\s*\d|spin\s*(?:gratis|santai|sekarang)|depo\s*(?:receh|murah)|maxwin)/i;
   const removeAdLike = el => {
@@ -601,7 +608,7 @@ class MainActivity : AppCompatActivity() {
     const box = el.closest && el.closest('aside,ins,figure,section,div,a');
     const target = box || el;
     const text = ((target.innerText || '') + ' ' + (target.getAttribute && (target.getAttribute('href') || '')) + ' ' + (el.getAttribute && (el.getAttribute('src') || el.getAttribute('alt') || ''))).slice(0,1200);
-    if (gambling.test(text)) target.remove();
+    if (/bm-88\.net/i.test(text) || gambling.test(text)) target.remove();
   };
   const clean = () => {
     try { document.querySelectorAll(selectors.join(',')).forEach(el => el.remove()); } catch(_) {}
