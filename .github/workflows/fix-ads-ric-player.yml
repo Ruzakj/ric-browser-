@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/scripts/fix_browser_ads_player.py'
       - '.github/scripts/block_bm88.py'
+      - '.github/scripts/aggressive_adshield.py'
       - '.github/workflows/fix-ads-ric-player.yml'
   workflow_dispatch:
 
@@ -23,6 +24,7 @@ jobs:
         run: |
           python3 .github/scripts/fix_browser_ads_player.py
           python3 .github/scripts/block_bm88.py
+          python3 .github/scripts/aggressive_adshield.py
 
       - name: Commit source update
         run: |
@@ -34,5 +36,5 @@ jobs:
             echo "No source changes needed"
             exit 0
           fi
-          git commit -m "Block bm-88 ads and redirects"
+          git commit -m "Enable aggressive ad and redirect blocking"
           git push origin main
