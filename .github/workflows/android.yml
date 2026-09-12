@@ -28,6 +28,20 @@ jobs:
         with:
           gradle-version: '8.10'
 
+      - name: Normalize Kotlin regex escape
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/ruzakj/ricbrowser/MainActivity.kt')
+          s = p.read_text()
+          old = 'Regex("\\.(mp4|m4v|webm|mkv|mov|3gp|mp3|m4a|aac|ogg|opus|wav|flac|m3u8|mpd)(?:[?#]|$)", RegexOption.IGNORE_CASE)'
+          new = 'Regex("""\\.(mp4|m4v|webm|mkv|mov|3gp|mp3|m4a|aac|ogg|opus|wav|flac|m3u8|mpd)(?:[?#]|$)""", RegexOption.IGNORE_CASE)'
+          if old not in s:
+              raise SystemExit('Target regex not found; source changed unexpectedly')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Clean, test and build debug/release
         run: |
           set -euo pipefail
