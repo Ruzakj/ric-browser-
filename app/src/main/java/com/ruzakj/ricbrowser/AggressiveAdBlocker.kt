@@ -4,6 +4,8 @@ import android.net.Uri
 import java.util.Locale
 
 object AggressiveAdBlocker {
+    private const val TRUSTED_SITE = "kuramanime.ing"
+
     private val blockedHosts = setOf(
         "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
         "adnxs.com", "taboola.com", "outbrain.com", "criteo.com", "popads.net", "popcash.net",
@@ -26,10 +28,19 @@ object AggressiveAdBlocker {
 
     private val mediaRegex = Regex("""\.(mp4|m4v|webm|mkv|mov|3gp|mp3|m4a|aac|ogg|opus|wav|flac|m3u8|mpd)(?:[?#]|$)""", RegexOption.IGNORE_CASE)
 
+    private fun isTrustedHost(value: String): Boolean {
+        val h = host(value).removePrefix("www.")
+        return h == TRUSTED_SITE || h.endsWith(".$TRUSTED_SITE")
+    }
+
     fun isBlockedRequest(raw: String): Boolean {
         val lower = raw.lowercase(Locale.ROOT)
         val host = host(raw)
         if (host.isBlank()) return false
+
+        // Never block Kuramanime's own document/assets. External ad networks are still filtered.
+        if (isTrustedHost(raw)) return false
+
         if (blockedHosts.any { host == it || host.endsWith(".$it") }) return true
         if (pathSignals.any(lower::contains)) return true
         if (suspiciousHostTokens.any(host::contains)) return true
@@ -38,6 +49,10 @@ object AggressiveAdBlocker {
 
     fun isBlockedNavigation(raw: String, page: String?): Boolean {
         if (raw.contains("__ric_user_approved=1")) return false
+
+        // Kuramanime and all of its subdomains are explicitly allowed as main destinations.
+        if (isTrustedHost(raw)) return false
+
         if (isBlockedRequest(raw)) return true
         if (mediaRegex.containsMatchIn(raw)) return false
 
@@ -68,6 +83,7 @@ object AggressiveAdBlocker {
 
     const val COSMETIC_JS = """
 (() => {
+  const TRUSTED_SITE = /(^|\.)kuramanime\.ing$/i.test(location.hostname || '');
   const BAD = /(slot|gacor|judi|casino|togel|bet(?:88|365)?|scatter|maxwin|rtp\s*\d|depo(?:sit)?|jackpot|spin\s*(?:gratis|sekarang)|bm-88|adsterra|propellerads|popads|exoclick|doubleclick|googlesyndication|googleadservices|adservice|adserver|popunder|clickunder|smartlink|pushads|sponsored)/i;
   const MEDIA = /\.(?:mp4|m4v|webm|mkv|mov|3gp|mp3|m4a|aac|ogg|opus|wav|flac|m3u8|mpd)(?:[?#]|$)/i;
   const selectors = [
@@ -80,15 +96,16 @@ object AggressiveAdBlocker {
     'iframe[src*="popads"]','iframe[src*="exoclick"]','iframe[src*="bm-88.net"]','img[src*="bm-88.net"]'
   ];
 
+  const hostname = u => {
+    try { return new URL(u, location.href).hostname || ''; } catch (_) { return ''; }
+  };
+  const isTrusted = u => /(^|\.)kuramanime\.ing$/i.test(hostname(u));
+
   const suspicious = u => {
-    if (!u || MEDIA.test(String(u))) return false;
+    if (!u || MEDIA.test(String(u)) || isTrusted(u)) return false;
     const x = String(u);
     if (BAD.test(x)) return true;
     return (x.match(/(?:utm_source|utm_medium|utm_campaign|register|ref|aff|affiliate|clickid|subid|zoneid|offer_id)=/gi) || []).length >= 2;
-  };
-
-  const hostname = u => {
-    try { return new URL(u, location.href).hostname || u; } catch (_) { return String(u || 'unknown link'); }
   };
 
   const approvedUrl = u => {
@@ -102,7 +119,7 @@ object AggressiveAdBlocker {
 
   const askPermission = u => window.confirm(
     'Ric Browser mencegah redirect otomatis.\n\n' +
-    'Tujuan: ' + hostname(u) + '\n\n' +
+    'Tujuan: ' + (hostname(u) || 'unknown link') + '\n\n' +
     'Link ini terdeteksi sebagai iklan / redirect mencurigakan. Tetap buka?'
   );
 
@@ -110,6 +127,10 @@ object AggressiveAdBlocker {
     const nativeOpen = window.open ? window.open.bind(window) : null;
     window.open = function(url, target, features) {
       if (!url) return null;
+      if (isTrusted(url)) {
+        location.href = new URL(url, location.href).href;
+        return window;
+      }
       if (suspicious(url) || BAD.test(String(url))) {
         if (!askPermission(url)) return null;
         location.href = approvedUrl(url);
@@ -122,17 +143,22 @@ object AggressiveAdBlocker {
   const remove = el => {
     if (!el || !el.parentNode) return;
     const target = (el.closest && el.closest('aside,ins,figure,section,article,div')) || el;
-    const text = ((target.innerText || '')+' '+(target.id || '')+' '+(target.className || '')+' '+(el.src || '')+' '+(el.alt || '')).slice(0,2200);
-    if (el.tagName !== 'A' && (BAD.test(text) || suspicious(el.src || ''))) target.remove();
+    const source = el.src || '';
+    if (source && isTrusted(source)) return;
+    const text = ((target.innerText || '')+' '+(target.id || '')+' '+(target.className || '')+' '+source+' '+(el.alt || '')).slice(0,2200);
+    if (el.tagName !== 'A' && (BAD.test(text) || suspicious(source))) target.remove();
   };
 
   const clean = () => {
+    // On Kuramanime use conservative cosmetic cleanup so legitimate site containers are never removed by text heuristics.
     try { document.querySelectorAll(selectors.join(',')).forEach(el => el.remove()); } catch (_) {}
-    try { document.querySelectorAll('img[src],iframe[src],script[src]').forEach(remove); } catch (_) {}
-    try { document.querySelectorAll('[style*="position: fixed"],[style*="position:fixed"],[style*="position: sticky"],[style*="position:sticky"]').forEach(el => {
-      const r=el.getBoundingClientRect(); const t=((el.innerText||'')+' '+(el.className||'')+' '+(el.id||'')).slice(0,1400);
-      if (r.width > innerWidth*.45 && r.height > 55 && (BAD.test(t) || /ad|banner|popup|sponsor|promo|install app/i.test(t))) el.remove();
-    }); } catch (_) {}
+    if (!TRUSTED_SITE) {
+      try { document.querySelectorAll('img[src],iframe[src],script[src]').forEach(remove); } catch (_) {}
+      try { document.querySelectorAll('[style*="position: fixed"],[style*="position:fixed"],[style*="position: sticky"],[style*="position:sticky"]').forEach(el => {
+        const r=el.getBoundingClientRect(); const t=((el.innerText||'')+' '+(el.className||'')+' '+(el.id||'')).slice(0,1400);
+        if (r.width > innerWidth*.45 && r.height > 55 && (BAD.test(t) || /ad|banner|popup|sponsor|promo|install app/i.test(t))) el.remove();
+      }); } catch (_) {}
+    }
   };
 
   if (!window.__ricPermissionGate) {
@@ -142,6 +168,7 @@ object AggressiveAdBlocker {
         const a = e.target && e.target.closest && e.target.closest('a[href]');
         if (!a) return;
         const href = a.href || '';
+        if (isTrusted(href)) return;
         if (!(suspicious(href) || BAD.test((a.innerText || '') + ' ' + href))) return;
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         if (askPermission(href)) location.href = approvedUrl(href);
