@@ -76,36 +76,78 @@ object AggressiveAdBlocker {
     '[class*="promo-banner"]','[id*="promo-banner"]','[class*="interstitial"]','[id*="interstitial"]',
     'iframe[src*="doubleclick"]','iframe[src*="googlesyndication"]','iframe[src*="googleadservices"]','iframe[src*="taboola"]',
     'iframe[src*="outbrain"]','iframe[src*="adnxs"]','iframe[src*="criteo"]','iframe[src*="adsterra"]','iframe[src*="propellerads"]',
-    'iframe[src*="popads"]','iframe[src*="exoclick"]','a[href*="bm-88.net"]','iframe[src*="bm-88.net"]','img[src*="bm-88.net"]'
+    'iframe[src*="popads"]','iframe[src*="exoclick"]','iframe[src*="bm-88.net"]','img[src*="bm-88.net"]'
   ];
+
   const suspicious = u => {
     if (!u || MEDIA.test(String(u))) return false;
     const x = String(u);
     if (BAD.test(x)) return true;
     return (x.match(/(?:utm_source|utm_medium|utm_campaign|register|ref|aff|affiliate|clickid|subid|zoneid|offer_id)=/gi) || []).length >= 2;
   };
+
+  const hostname = u => {
+    try { return new URL(u, location.href).hostname || u; } catch (_) { return String(u || 'unknown link'); }
+  };
+
+  const askPermission = u => {
+    const host = hostname(u);
+    return window.confirm(
+      'Ric Browser memblokir redirect otomatis.\n\n' +
+      'Situs ingin membuka:\n' + host + '\n\n' +
+      'Link ini terdeteksi sebagai iklan / redirect mencurigakan. Tetap buka?'
+    );
+  };
+
+  // Pop-up / window.open never opens silently. Suspicious targets always need approval.
+  try {
+    const nativeOpen = window.open ? window.open.bind(window) : null;
+    window.open = function(url, target, features) {
+      if (!url) return null;
+      if (suspicious(url) || BAD.test(String(url))) {
+        if (!askPermission(url)) return null;
+        // Same WebView is more predictable on TV than spawning an uncontrolled tab.
+        location.href = String(url);
+        return window;
+      }
+      return nativeOpen ? nativeOpen(url, target, features) : null;
+    };
+  } catch (_) {}
+
   const remove = el => {
     if (!el || !el.parentNode) return;
-    const target = (el.closest && el.closest('aside,ins,figure,section,article,div,a')) || el;
-    const text = ((target.innerText || '')+' '+(target.id || '')+' '+(target.className || '')+' '+(el.href || '')+' '+(el.src || '')+' '+(el.alt || '')).slice(0,2200);
-    if (BAD.test(text) || suspicious(el.href || el.src || '')) target.remove();
+    const target = (el.closest && el.closest('aside,ins,figure,section,article,div')) || el;
+    const text = ((target.innerText || '')+' '+(target.id || '')+' '+(target.className || '')+' '+(el.src || '')+' '+(el.alt || '')).slice(0,2200);
+    // Do not delete suspicious anchors here: if one survives visually, the permission gate below owns the click.
+    if (el.tagName !== 'A' && (BAD.test(text) || suspicious(el.src || ''))) target.remove();
   };
+
   const clean = () => {
     try { document.querySelectorAll(selectors.join(',')).forEach(el => el.remove()); } catch (_) {}
-    try { document.querySelectorAll('a[href],img[src],iframe[src],script[src]').forEach(remove); } catch (_) {}
-    try { document.querySelectorAll('a[target="_blank"],a[rel*="sponsored"]').forEach(a => { if (suspicious(a.href) || BAD.test((a.innerText||'')+' '+a.href)) a.remove(); }); } catch (_) {}
+    try { document.querySelectorAll('img[src],iframe[src],script[src]').forEach(remove); } catch (_) {}
     try { document.querySelectorAll('[style*="position: fixed"],[style*="position:fixed"],[style*="position: sticky"],[style*="position:sticky"]').forEach(el => {
       const r=el.getBoundingClientRect(); const t=((el.innerText||'')+' '+(el.className||'')+' '+(el.id||'')).slice(0,1400);
       if (r.width > innerWidth*.45 && r.height > 55 && (BAD.test(t) || /ad|banner|popup|sponsor|promo|install app/i.test(t))) el.remove();
     }); } catch (_) {}
   };
-  try { window.open = function(){ return null; }; } catch (_) {}
-  if (!window.__ricAggressiveClickGuard) {
-    window.__ricAggressiveClickGuard = true;
+
+  // Last-chance click gate. Ads that survive cosmetic blocking cannot navigate without the user's decision.
+  if (!window.__ricPermissionGate) {
+    window.__ricPermissionGate = true;
     document.addEventListener('click', e => {
-      try { const a=e.target&&e.target.closest&&e.target.closest('a[href]'); if(a && (suspicious(a.href)||BAD.test((a.innerText||'')+' '+a.href))){e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();} } catch(_){}
+      try {
+        const a = e.target && e.target.closest && e.target.closest('a[href]');
+        if (!a) return;
+        const href = a.href || '';
+        if (!(suspicious(href) || BAD.test((a.innerText || '') + ' ' + href))) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (askPermission(href)) location.href = href;
+      } catch (_) {}
     }, true);
   }
+
   clean();
   if (!window.__ricAggressiveObserver) {
     window.__ricAggressiveObserver = new MutationObserver(clean);
