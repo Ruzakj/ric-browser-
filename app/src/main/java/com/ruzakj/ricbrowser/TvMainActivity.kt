@@ -88,7 +88,7 @@ class TvMainActivity : AppCompatActivity() {
 
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; visibility = View.GONE }
         status = TextView(this).apply {
-            text = "Aggressive Ad Block ON • D-pad navigates • OK selects • Back returns"
+            text = "Aggressive Ad Block ON • Permission Gate ON • D-pad navigates"
             textSize = 13f
             setTextColor(Color.rgb(170, 174, 184))
             setPadding(dp(4), dp(8), 0, dp(8))
@@ -139,13 +139,16 @@ class TvMainActivity : AppCompatActivity() {
                 val scheme = request.url.scheme?.lowercase().orEmpty()
                 if (scheme != "http" && scheme != "https") return true
                 if (AggressiveAdBlocker.isBlockedNavigation(target, view.url)) {
-                    status.text = "Blocked ad / redirect"
+                    status.text = "Blocked automatic ad / redirect"
                     return true
                 }
                 return false
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                // Main-frame navigation is governed by shouldOverrideUrlLoading + the user permission gate.
+                // Keep network blocking for ad/tracker subresources so an approved destination can actually open.
+                if (request.isForMainFrame) return super.shouldInterceptRequest(view, request)
                 val target = request.url.toString()
                 if (AggressiveAdBlocker.isBlockedRequest(target)) {
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
@@ -155,7 +158,7 @@ class TvMainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 pageLoaded = false
-                status.text = "Loading… • Aggressive Ad Block ON"
+                status.text = "Loading… • Aggressive Ad Block ON • Permission Gate ON"
                 if (!address.hasFocus()) address.setText(displayUrl(url))
                 view.evaluateJavascript(AggressiveAdBlocker.COSMETIC_JS, null)
             }
@@ -165,7 +168,7 @@ class TvMainActivity : AppCompatActivity() {
                 if (!address.hasFocus()) address.setText(displayUrl(url))
                 view.evaluateJavascript(AggressiveAdBlocker.COSMETIC_JS, null)
                 injectRemoteNavigation()
-                status.text = "Aggressive Ad Block ON • D-pad move • OK open • Back previous"
+                status.text = "Ad Block + Permission Gate ON • D-pad move • OK open • Back previous"
                 view.requestFocus()
             }
         }
@@ -200,7 +203,7 @@ class TvMainActivity : AppCompatActivity() {
     private fun showTvMenu() {
         val options = arrayOf("Address / Search", "Home", "Reload", "Page up", "Page down", "Zoom +", "Zoom -", "Close")
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Ric Browser TV • Aggressive Ad Block")
+            .setTitle("Ric Browser TV • Ad Block + Permission Gate")
             .setItems(options) { dialog, which ->
                 when (which) {
                     0 -> focusAddress()
