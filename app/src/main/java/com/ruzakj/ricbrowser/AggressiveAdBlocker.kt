@@ -37,6 +37,7 @@ object AggressiveAdBlocker {
     }
 
     fun isBlockedNavigation(raw: String, page: String?): Boolean {
+        if (raw.contains("__ric_user_approved=1")) return false
         if (isBlockedRequest(raw)) return true
         if (mediaRegex.containsMatchIn(raw)) return false
 
@@ -90,24 +91,28 @@ object AggressiveAdBlocker {
     try { return new URL(u, location.href).hostname || u; } catch (_) { return String(u || 'unknown link'); }
   };
 
-  const askPermission = u => {
-    const host = hostname(u);
-    return window.confirm(
-      'Ric Browser memblokir redirect otomatis.\n\n' +
-      'Situs ingin membuka:\n' + host + '\n\n' +
-      'Link ini terdeteksi sebagai iklan / redirect mencurigakan. Tetap buka?'
-    );
+  const approvedUrl = u => {
+    try {
+      const x = new URL(u, location.href);
+      const base = x.hash ? x.hash.substring(1) + '&' : '';
+      x.hash = base + '__ric_user_approved=1';
+      return x.href;
+    } catch (_) { return String(u); }
   };
 
-  // Pop-up / window.open never opens silently. Suspicious targets always need approval.
+  const askPermission = u => window.confirm(
+    'Ric Browser mencegah redirect otomatis.\n\n' +
+    'Tujuan: ' + hostname(u) + '\n\n' +
+    'Link ini terdeteksi sebagai iklan / redirect mencurigakan. Tetap buka?'
+  );
+
   try {
     const nativeOpen = window.open ? window.open.bind(window) : null;
     window.open = function(url, target, features) {
       if (!url) return null;
       if (suspicious(url) || BAD.test(String(url))) {
         if (!askPermission(url)) return null;
-        // Same WebView is more predictable on TV than spawning an uncontrolled tab.
-        location.href = String(url);
+        location.href = approvedUrl(url);
         return window;
       }
       return nativeOpen ? nativeOpen(url, target, features) : null;
@@ -118,7 +123,6 @@ object AggressiveAdBlocker {
     if (!el || !el.parentNode) return;
     const target = (el.closest && el.closest('aside,ins,figure,section,article,div')) || el;
     const text = ((target.innerText || '')+' '+(target.id || '')+' '+(target.className || '')+' '+(el.src || '')+' '+(el.alt || '')).slice(0,2200);
-    // Do not delete suspicious anchors here: if one survives visually, the permission gate below owns the click.
     if (el.tagName !== 'A' && (BAD.test(text) || suspicious(el.src || ''))) target.remove();
   };
 
@@ -131,7 +135,6 @@ object AggressiveAdBlocker {
     }); } catch (_) {}
   };
 
-  // Last-chance click gate. Ads that survive cosmetic blocking cannot navigate without the user's decision.
   if (!window.__ricPermissionGate) {
     window.__ricPermissionGate = true;
     document.addEventListener('click', e => {
@@ -140,10 +143,8 @@ object AggressiveAdBlocker {
         if (!a) return;
         const href = a.href || '';
         if (!(suspicious(href) || BAD.test((a.innerText || '') + ' ' + href))) return;
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        if (askPermission(href)) location.href = href;
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        if (askPermission(href)) location.href = approvedUrl(href);
       } catch (_) {}
     }, true);
   }
