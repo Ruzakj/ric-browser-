@@ -1,0 +1,69 @@
+name: Add Android TV Remote Cursor
+
+on:
+  push:
+    paths:
+      - '.github/workflows/add-tv-remote-cursor.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add TV-only virtual cursor
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/src/main/java/com/ruzakj/ricbrowser/TvMainActivity.kt')
+          s=p.read_text()
+          old='''                KeyEvent.KEYCODE_DPAD_LEFT -> { moveDomFocus("left"); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { moveDomFocus("right"); return true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { moveDomFocus("down"); return true }
+                KeyEvent.KEYCODE_DPAD_UP -> { if (webView.scrollY <= dp(6)) focusAddress() else moveDomFocus("up"); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { webView.evaluateJavascript("window.__ricTvClick&&window.__ricTvClick()", null); return true }'''
+          new='''                KeyEvent.KEYCODE_DPAD_LEFT -> { moveCursor(-1, 0, event.repeatCount); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { moveCursor(1, 0, event.repeatCount); return true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { moveCursor(0, 1, event.repeatCount); return true }
+                KeyEvent.KEYCODE_DPAD_UP -> { moveCursor(0, -1, event.repeatCount); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { clickCursor(); return true }'''
+          if old not in s: raise SystemExit('D-pad block not found')
+          s=s.replace(old,new,1)
+          marker='''    private fun moveDomFocus(direction: String) { webView.evaluateJavascript("window.__ricTvMove&&window.__ricTvMove('$direction')", null) }'''
+          helpers='''    private fun moveCursor(dx: Int, dy: Int, repeat: Int) {
+        val step = (28 + (repeat.coerceAtMost(8) * 7))
+        webView.evaluateJavascript("window.__ricTvCursorMove&&window.__ricTvCursorMove(${dx * step},${dy * step})", null)
+    }
+    private fun clickCursor() { webView.evaluateJavascript("window.__ricTvCursorClick&&window.__ricTvCursorClick()", null) }
+'''
+          if marker not in s: raise SystemExit('helper marker not found')
+          s=s.replace(marker,helpers+marker,1)
+          needle="""  const style=document.createElement('style');
+  style.textContent=`:focus{outline:5px solid #4f8cff!important;outline-offset:5px!important}[data-ric-tv-focus=\"1\"]{outline:5px solid #4f8cff!important;outline-offset:5px!important}`;
+  (document.head||document.documentElement).appendChild(style);"""
+          replacement="""  const style=document.createElement('style');
+  style.textContent=`:focus{outline:5px solid #4f8cff!important;outline-offset:5px!important}[data-ric-tv-focus=\"1\"]{outline:5px solid #4f8cff!important;outline-offset:5px!important}#__ric_tv_cursor{position:fixed;z-index:2147483647;width:24px;height:24px;left:50%;top:50%;pointer-events:none;filter:drop-shadow(0 1px 2px #000);transform:translate(-3px,-3px)}#__ric_tv_cursor:before{content:'';display:block;width:0;height:0;border-top:20px solid white;border-right:12px solid transparent;transform:rotate(-12deg)}#__ric_tv_cursor:after{content:'';position:absolute;left:3px;top:3px;width:0;height:0;border-top:14px solid #111;border-right:8px solid transparent;transform:rotate(-12deg)}`;
+  (document.head||document.documentElement).appendChild(style);
+  const cursor=document.createElement('div'); cursor.id='__ric_tv_cursor'; (document.body||document.documentElement).appendChild(cursor);
+  let cx=innerWidth/2,cy=innerHeight/2;
+  const paintCursor=()=>{cx=Math.max(3,Math.min(innerWidth-3,cx));cy=Math.max(3,Math.min(innerHeight-3,cy));cursor.style.left=cx+'px';cursor.style.top=cy+'px'};
+  paintCursor();
+  window.__ricTvCursorMove=(dx,dy)=>{cx+=dx;cy+=dy;paintCursor();const edge=45;if(cy>innerHeight-edge)scrollBy({top:Math.max(70,dy*3),behavior:'smooth'});else if(cy<edge)scrollBy({top:Math.min(-70,dy*3),behavior:'smooth'});return true};
+  window.__ricTvCursorClick=()=>{const el=document.elementFromPoint(cx,cy);if(!el)return false;try{el.focus({preventScroll:true})}catch(_){};try{el.click();return true}catch(_){try{el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:cx,clientY:cy}));return true}catch(__){return false}}};"""
+          if needle not in s: raise SystemExit('JS style marker not found')
+          s=s.replace(needle,replacement,1)
+          s=s.replace('Aggressive Ad Block ON • Permission Gate ON • D-pad navigates','TV cursor • D-pad move • OK click')
+          s=s.replace('Ad Block + Permission Gate ON • D-pad move • OK open • Back previous','TV cursor • D-pad move • OK click • Back previous')
+          p.write_text(s)
+          PY
+      - name: Commit TV cursor
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/ruzakj/ricbrowser/TvMainActivity.kt
+          git commit -m "Add remote-controlled mouse cursor for Android TV"
+          git push
