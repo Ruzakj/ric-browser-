@@ -71,6 +71,26 @@ sleep 5
 assert_alive
 assert_activity_foreground
 
+echo '=== ANDROID TV NAVIGATION MODES ==='
+adb shell am force-stop "$PACKAGE"
+adb logcat -c
+adb shell am start -W -n "$PACKAGE/.TvMainActivity" | tee /tmp/tv-start.txt
+grep -q 'Status: ok' /tmp/tv-start.txt
+sleep 4
+assert_alive
+adb shell input keyevent KEYCODE_1
+adb shell input keyevent KEYCODE_DPAD_RIGHT
+adb shell input keyevent KEYCODE_DPAD_DOWN
+adb shell input keyevent KEYCODE_DPAD_CENTER
+adb shell input keyevent KEYCODE_1
+adb shell input keyevent KEYCODE_DPAD_DOWN
+adb shell input keyevent KEYCODE_DPAD_UP
+sleep 3
+assert_alive
+adb logcat -d -v threadtime > /tmp/tv-logcat.txt
+fail_on_runtime_blocker /tmp/tv-logcat.txt
+echo 'TV_SCROLL_CURSOR_MODES=PASS'
+
 echo '=== LOGCAT #2 ==='
 adb logcat -d -v threadtime > /tmp/logcat2.txt
 fail_on_runtime_blocker /tmp/logcat2.txt
