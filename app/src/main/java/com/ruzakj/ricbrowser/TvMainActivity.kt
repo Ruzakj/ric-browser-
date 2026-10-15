@@ -33,6 +33,11 @@ class TvMainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var toolbar: LinearLayout
     private var pageLoaded = false
+    private enum class NavigationMode { SCROLL, CURSOR }
+    private var navigationMode = NavigationMode.SCROLL
+    private var cursorX = 0
+    private var cursorY = 0
+    private var cursorInitialized = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,7 +93,7 @@ class TvMainActivity : AppCompatActivity() {
 
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; visibility = View.GONE }
         status = TextView(this).apply {
-            text = "Aggressive Ad Block ON • Permission Gate ON • D-pad navigates"
+            text = "SCROLL MODE • ↑↓ scroll • Press 1 for cursor mode"
             textSize = 13f
             setTextColor(Color.rgb(170, 174, 184))
             setPadding(dp(4), dp(8), 0, dp(8))
@@ -168,7 +173,8 @@ class TvMainActivity : AppCompatActivity() {
                 if (!address.hasFocus()) address.setText(displayUrl(url))
                 view.evaluateJavascript(AggressiveAdBlocker.COSMETIC_JS, null)
                 injectRemoteNavigation()
-                status.text = "Ad Block + Permission Gate ON • D-pad move • OK open • Back previous"
+                cursorInitialized = false
+                status.text = modeStatus()
                 view.requestFocus()
             }
         }
@@ -224,25 +230,62 @@ class TvMainActivity : AppCompatActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
         when (event.keyCode) {
+            KeyEvent.KEYCODE_1, KeyEvent.KEYCODE_NUMPAD_1 -> {
+                navigationMode = if (navigationMode == NavigationMode.SCROLL) NavigationMode.CURSOR else NavigationMode.SCROLL
+                cursorInitialized = false
+                status.text = modeStatus()
+                if (pageLoaded) {
+                    val jsMode = if (navigationMode == NavigationMode.CURSOR) "cursor" else "scroll"
+                    webView.evaluateJavascript("window.__ricTvSetMode&&window.__ricTvSetMode('$jsMode')", null)
+                }
+                webView.requestFocus()
+                return true
+            }
             KeyEvent.KEYCODE_SEARCH, KeyEvent.KEYCODE_MENU -> { focusAddress(); return true }
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { webView.evaluateJavascript("window.__ricTvMediaToggle&&window.__ricTvMediaToggle()", null); return true }
-            KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> { webView.pageUp(false); return true }
-            KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN -> { webView.pageDown(false); return true }
+            KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> { webView.evaluateJavascript("window.scrollBy({top:-Math.round(innerHeight*.8),behavior:'smooth'})", null); return true }
+            KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN -> { webView.evaluateJavascript("window.scrollBy({top:Math.round(innerHeight*.8),behavior:'smooth'})", null); return true }
             KeyEvent.KEYCODE_BACK -> {
                 if (address.hasFocus()) { hideKeyboard(); address.clearFocus(); webView.requestFocus(); return true }
                 if (webView.canGoBack()) { webView.goBack(); return true }
             }
         }
         if (webView.hasFocus() && pageLoaded) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT -> { moveDomFocus("left"); return true }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> { moveDomFocus("right"); return true }
-                KeyEvent.KEYCODE_DPAD_DOWN -> { moveDomFocus("down"); return true }
-                KeyEvent.KEYCODE_DPAD_UP -> { if (webView.scrollY <= dp(6)) focusAddress() else moveDomFocus("up"); return true }
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { webView.evaluateJavascript("window.__ricTvClick&&window.__ricTvClick()", null); return true }
+            if (navigationMode == NavigationMode.CURSOR) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> { moveCursor(-1, 0, event); return true }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> { moveCursor(1, 0, event); return true }
+                    KeyEvent.KEYCODE_DPAD_UP -> { moveCursor(0, -1, event); return true }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> { moveCursor(0, 1, event); return true }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { webView.evaluateJavascript("window.__ricTvCursorClick&&window.__ricTvCursorClick()", null); return true }
+                }
+            } else {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> { webView.evaluateJavascript("window.scrollBy({left:-Math.round(innerWidth*.65),behavior:'smooth'})", null); return true }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> { webView.evaluateJavascript("window.scrollBy({left:Math.round(innerWidth*.65),behavior:'smooth'})", null); return true }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> { webView.evaluateJavascript("window.scrollBy({top:Math.round(innerHeight*.65),behavior:'smooth'})", null); return true }
+                    KeyEvent.KEYCODE_DPAD_UP -> { webView.evaluateJavascript("window.scrollBy({top:-Math.round(innerHeight*.65),behavior:'smooth'})", null); return true }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { webView.evaluateJavascript("window.__ricTvClick&&window.__ricTvClick()", null); return true }
+                }
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun modeStatus() = if (navigationMode == NavigationMode.SCROLL)
+        "SCROLL MODE • ↑↓ scroll page • Press 1 for cursor"
+    else "CURSOR MODE • D-pad move pointer • OK click • Press 1 to scroll"
+
+    private fun moveCursor(dx: Int, dy: Int, event: KeyEvent) {
+        if (!cursorInitialized) {
+            cursorInitialized = true
+            cursorX = resources.displayMetrics.widthPixels / 2
+            cursorY = resources.displayMetrics.heightPixels / 2
+        }
+        val distance = if (event.repeatCount > 5) 42 else if (event.repeatCount > 1) 28 else 18
+        cursorX = (cursorX + dx * distance).coerceIn(0, resources.displayMetrics.widthPixels)
+        cursorY = (cursorY + dy * distance).coerceIn(0, resources.displayMetrics.heightPixels)
+        webView.evaluateJavascript("window.__ricTvCursorMove&&window.__ricTvCursorMove($dx,$dy,$distance)", null)
     }
 
     private fun moveDomFocus(direction: String) { webView.evaluateJavascript("window.__ricTvMove&&window.__ricTvMove('$direction')", null) }
@@ -298,8 +341,15 @@ class TvMainActivity : AppCompatActivity() {
   const center=r=>({x:r.left+r.width/2,y:r.top+r.height/2});
   const mark=el=>{document.querySelectorAll('[data-ric-tv-focus="1"]').forEach(x=>x.removeAttribute('data-ric-tv-focus'));if(!el)return false;el.setAttribute('data-ric-tv-focus','1');try{el.focus({preventScroll:true})}catch(_){try{el.focus()}catch(_){}}try{el.scrollIntoView({block:'center',inline:'center',behavior:'smooth'})}catch(_){el.scrollIntoView()}return true};
   window.__ricTvMove=dir=>{const all=items();if(!all.length)return false;let cur=document.activeElement;if(!cur||cur===document.body||cur===document.documentElement||!all.includes(cur)){const cx=innerWidth/2,cy=innerHeight/2;cur=all.slice().sort((a,b)=>{const A=center(a.getBoundingClientRect()),B=center(b.getBoundingClientRect());return Math.hypot(A.x-cx,A.y-cy)-Math.hypot(B.x-cx,B.y-cy)})[0];return mark(cur)}const c=center(cur.getBoundingClientRect());const ranked=all.filter(el=>el!==cur).map(el=>{const p=center(el.getBoundingClientRect()),dx=p.x-c.x,dy=p.y-c.y;const valid=dir==='left'?dx<-3:dir==='right'?dx>3:dir==='up'?dy<-3:dy>3;if(!valid)return null;const primary=(dir==='left'||dir==='right')?Math.abs(dx):Math.abs(dy),cross=(dir==='left'||dir==='right')?Math.abs(dy):Math.abs(dx);return{el,score:primary+cross*2.4+Math.hypot(dx,dy)*.15}}).filter(Boolean).sort((a,b)=>a.score-b.score);if(ranked.length)return mark(ranked[0].el);if(dir==='down')scrollBy({top:Math.round(innerHeight*.68),behavior:'smooth'});if(dir==='up')scrollBy({top:-Math.round(innerHeight*.68),behavior:'smooth'});return false};
+  let mode='scroll', cx=Math.round(innerWidth/2), cy=Math.round(innerHeight/2), cursor=null;
+  const ensureCursor=()=>{if(cursor&&cursor.isConnected)return cursor;cursor=document.createElement('div');cursor.id='__ric_tv_virtual_cursor';cursor.setAttribute('aria-hidden','true');cursor.style.cssText='position:fixed;z-index:2147483647;left:'+cx+'px;top:'+cy+'px;width:24px;height:24px;box-sizing:border-box;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 2px #1769ff,0 2px 8px #000;background:rgba(23,105,255,.18);pointer-events:none;transform:translate(-50%,-50%);display:none';(document.documentElement||document.body).appendChild(cursor);return cursor};
+  const paintCursor=()=>{const c=ensureCursor();c.style.display=mode==='cursor'?'block':'none';c.style.left=cx+'px';c.style.top=cy+'px'};
+  window.__ricTvSetMode=m=>{mode=m==='cursor'?'cursor':'scroll';if(mode==='cursor'){cx=Math.min(innerWidth-2,Math.max(2,cx));cy=Math.min(innerHeight-2,Math.max(2,cy));paintCursor()}else if(cursor)cursor.style.display='none';return mode};
+  window.__ricTvCursorMove=(dx,dy,distance)=>{if(mode!=='cursor')return false;const step=Math.max(12,Math.min(52,Number(distance)||20));cx=Math.max(2,Math.min(innerWidth-2,cx+dx*step));cy=Math.max(2,Math.min(innerHeight-2,cy+dy*step));paintCursor();if(cy>innerHeight-35)window.scrollBy({top:Math.round(innerHeight*.18),behavior:'smooth'});else if(cy<35)window.scrollBy({top:-Math.round(innerHeight*.18),behavior:'smooth'});return true};
+  window.__ricTvCursorClick=()=>{if(mode!=='cursor')return false;const el=document.elementFromPoint(cx,cy);if(!el)return false;const media=el.closest&&el.closest('video,audio');if(media){media.paused?media.play():media.pause();return true}const target=el.closest&&el.closest('a[href],button,input,select,textarea,summary,[role="button"],[role="link"],[onclick],[tabindex]')||el;try{target.focus({preventScroll:true})}catch(_){}try{target.click();return true}catch(_){return false}};
   window.__ricTvClick=()=>{const el=document.activeElement;if(!el||el===document.body||el===document.documentElement)return window.__ricTvMove('down');if(el.tagName==='VIDEO'||el.tagName==='AUDIO'){el.paused?el.play():el.pause();return true}try{el.click();return true}catch(_){return false}};
   window.__ricTvMediaToggle=()=>{const media=document.querySelector('video,audio');if(!media)return false;media.paused?media.play():media.pause();return true};
+  window.__ricTvSetMode('scroll');
 })();
 """
     }
